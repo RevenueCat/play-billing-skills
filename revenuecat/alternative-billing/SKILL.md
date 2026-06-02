@@ -1,6 +1,6 @@
 ---
 name: alternative-billing
-description: Use this skill when scoping Google Play alternative billing work with RevenueCat Android SDK 8.x. Documents the current support status, which flows RevenueCat abstracts and which require direct integration at the time the chapter was written.
+description: Use this skill when scoping Google Play alternative billing work with RevenueCat Android SDK 10.x. Documents the current support status, which flows RevenueCat abstracts and which require direct integration at the time the chapter was written.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
