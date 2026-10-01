@@ -20,12 +20,13 @@ Failed renewals on Google Play move a subscription through two states: grace per
 
 ## Phase 1: Understand
 
-Three things happen when a renewal fails:
+A failed renewal leads to one of these states:
 
 | State | Access | How RevenueCat surfaces it | User sees |
 | --- | --- | --- | --- |
 | Grace period | Retained | `entitlement.isActive == true` and `billingIssueDetectedAt != null` | Google in app snackbar by default |
 | Account hold | Revoked | `entitlement.isActive == false` and `billingIssueDetectedAt != null` | Google in app snackbar by default |
+| Expired without recovery | Revoked | Same as account hold, because `billingIssueDetectedAt` stays set after the subscription ends | Your account hold screen and its paywall path |
 | Recovered | Retained | `billingIssueDetectedAt == null` | Nothing |
 
 Two signals matter in the SDK:
@@ -79,16 +80,20 @@ Read the entitlement and branch on both flags:
 ```kotlin
 val entitlement = customerInfo.entitlements["pro_access"]
 when {
-    entitlement == null || !entitlement.isActive ->
+    entitlement == null ->
         showSubscribeScreen()
-    entitlement.billingIssueDetectedAt != null && entitlement.isActive ->
+    entitlement.isActive && entitlement.billingIssueDetectedAt != null ->
         showGracePeriodWarning()
-    entitlement.billingIssueDetectedAt != null && !entitlement.isActive ->
+    entitlement.isActive ->
+        showPremiumContent()
+    entitlement.billingIssueDetectedAt != null ->
         showAccountHoldScreen()
     else ->
-        showPremiumContent()
+        showSubscribeScreen()
 }
 ```
+
+Check `billingIssueDetectedAt` before falling back to the subscribe screen. An inactive entitlement with a billing issue is usually account hold, where fixing the payment method restores the existing subscription. Buying again also restores access, and RevenueCat clears `billingIssueDetectedAt` only when the issue is resolved, so a subscription that expired without recovery can still carry it. Lead the account hold screen with the fix payment link and keep a path to the paywall.
 
 ### Send the user to fix payment
 
