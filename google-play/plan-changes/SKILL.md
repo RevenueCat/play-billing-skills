@@ -54,8 +54,9 @@ Use this table to map your Phase 1 answers to a mode.
 | Downgrade | `DEFERRED` | No | At next renewal |
 | Subscription add on, both plans active | `KEEP_EXISTING` | Yes, new plan charged | Immediate, existing plan untouched |
 
-Two rules keep you out of trouble:
+Three rules keep you out of trouble:
 
+- Between base plans of the same subscription (for example monthly to annual of one product), Google accepts only `CHARGE_FULL_PRICE` or `WITHOUT_PRORATION`. Any other mode fails the purchase, so check this before using the `WITH_TIME_PRORATION`, `CHARGE_PRORATED_PRICE`, or `DEFERRED` rows.
 - `CHARGE_PRORATED_PRICE` only works for upgrades. Using it on a downgrade makes the billing flow fail because Google does not refund through proration.
 - `CHARGE_FULL_PRICE` is required for any switch that involves a prepaid plan, since prepaid plans have no recurring cycle to prorate.
 

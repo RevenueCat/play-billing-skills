@@ -31,21 +31,31 @@ Skip this skill if the user has no active subscription. For a fresh purchase, us
 
 ## Phase 2: Plan (pick a replacement mode)
 
-`GoogleReplacementMode` maps one to one onto Google's billing modes. Pick based on the user intent:
+`GoogleReplacementMode` maps one to one onto Google's billing modes. First check whether the old and new plans are base plans of the same subscription product, that is, whether the part before `:` matches. Google restricts which modes that switch accepts.
+
+**Same subscription** (for example `premium:monthly` to `premium:annual`). Google accepts only these two modes. Any other mode fails the purchase with an error shown to the user.
 
 | Scenario | Mode | Billing effect |
 |---|---|---|
-| Standard upgrade (monthly to annual) | `WITH_TIME_PRORATION` | Immediate switch, remaining time credited |
-| Upgrade, keep the existing billing date | `CHARGE_PRORATED_PRICE` | Immediate switch, prorated charge now |
-| Switch to or from a prepaid plan | `CHARGE_FULL_PRICE` | Immediate switch, full charge now |
-| Upgrade during an active free trial | `CHARGE_PRORATED_PRICE` | Immediate switch, prorated charge now |
-| Downgrade (annual to monthly) | `DEFERRED` | Switch applies at next renewal |
+| Charge for the new plan now (for example monthly to annual) | `CHARGE_FULL_PRICE` | Immediate switch, full charge now, remaining value carried over |
+| Charge for the new plan at the next renewal | `WITHOUT_PRORATION` | Immediate switch, new price charged at the next renewal |
 
-Do not default to `WITHOUT_PRORATION` for trial upgrades. `WITHOUT_PRORATION` applies the new plan immediately but charges nothing until the next renewal, which gives the user free premium access they did not pay for. Use `CHARGE_PRORATED_PRICE` to charge the upgrade price on the spot.
+**Different subscription products** (for example `basic` to `premium`):
+
+| Scenario | Mode | Billing effect |
+|---|---|---|
+| Upgrade without charging now | `WITH_TIME_PRORATION` | Immediate switch, remaining time credited by pushing out the next billing date |
+| Upgrade, keep the existing billing date | `CHARGE_PRORATED_PRICE` | Immediate switch, prorated charge now. Upgrades only: the price per unit of time must increase |
+| Upgrade during an active free trial | `CHARGE_PRORATED_PRICE` | Immediate switch, prorated charge now |
+| Downgrade | `DEFERRED` | Switch applies at next renewal |
+
+Switching to a prepaid plan accepts only `CHARGE_FULL_PRICE`.
+
+Do not default to `WITHOUT_PRORATION` for trial upgrades. `WITHOUT_PRORATION` applies the new plan immediately but charges nothing until the next renewal, which gives the user free premium access they did not pay for. Use `CHARGE_PRORATED_PRICE` to charge the upgrade price on the spot, or `CHARGE_FULL_PRICE` when the trial is on a base plan of the same subscription.
 
 If you set no mode, `PurchaseParams` defaults to `WITHOUT_PRORATION`. Set the mode explicitly every time.
 
-`DEFERRED` is valid only for downgrades. Google rejects deferred upgrades.
+`DEFERRED` applies the change at the next renewal, for upgrades and downgrades alike. It is the usual choice for a downgrade across subscription products, and Google does not accept it between base plans of the same subscription.
 
 ## Phase 3: Execute
 
@@ -69,7 +79,9 @@ val params = PurchaseParams.Builder(activity, newPackage)
     .googleProductChangeInfo(
         GoogleProductChangeInfo(
             oldProductId = currentProductId,
-            replacementMode = GoogleReplacementMode.WITH_TIME_PRORATION,
+            // Monthly and annual are base plans of one subscription, so only
+            // CHARGE_FULL_PRICE or WITHOUT_PRORATION is accepted.
+            replacementMode = GoogleReplacementMode.CHARGE_FULL_PRICE,
         )
     )
     .build()
@@ -103,8 +115,8 @@ You do not write `linkedPurchaseToken` traversal code. RevenueCat resolves the c
 |---|---|
 | Hardcoding `oldProductId` as a constant | Derive it from `customerInfo.activeSubscriptions.firstOrNull()?.substringBefore(":")` |
 | Passing `"productId:basePlanId"` as `oldProductId` | Slice off the base plan with `substringBefore(":")` |
-| Using `WITHOUT_PRORATION` for a trial upgrade | Use `CHARGE_PRORATED_PRICE` so the user is charged now |
-| Using `DEFERRED` for an upgrade | `DEFERRED` is downgrade only; Google rejects deferred upgrades |
+| Using `WITHOUT_PRORATION` for a trial upgrade | Use `CHARGE_PRORATED_PRICE` (or `CHARGE_FULL_PRICE` within the same subscription) so the user is charged now |
+| Using `WITH_TIME_PRORATION`, `CHARGE_PRORATED_PRICE`, or `DEFERRED` between base plans of the same subscription | Google accepts only `CHARGE_FULL_PRICE` or `WITHOUT_PRORATION` there. Any other mode fails the purchase |
 | Writing backend code to follow `linkedPurchaseToken` | RevenueCat does this server side, delete the code |
 | Reading the SKU to decide UI state | Read `entitlements[...]?.isActive` instead |
 
