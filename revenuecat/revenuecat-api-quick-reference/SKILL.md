@@ -144,7 +144,7 @@ pkg.webCheckoutURL         // URL? (RevenueCat web billing)
 
 ```kotlin
 val product: StoreProduct
-product.productId
+product.id                 // "productId:basePlanId" for subscriptions, "productId" for one time products
 product.title
 product.description
 product.price.formatted    // "$4.99"

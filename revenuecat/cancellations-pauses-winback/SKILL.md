@@ -1,6 +1,6 @@
 ---
 name: cancellations-pauses-winback
-description: Use this skill when surfacing cancellation, pause, and winback state on Android with RevenueCat. Covers reading unsubscribeDetectedAt, billingIssuesDetectedAt, pause state via periodType, managementURL for deep link, and pause resume date lookup via the REST API.
+description: Use this skill when surfacing cancellation, pause, and winback state on Android with RevenueCat. Covers reading unsubscribeDetectedAt, billingIssueDetectedAt, pause state via periodType, managementURL for deep link, and pause resume date lookup via the REST API.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -25,7 +25,7 @@ Decide what state you need to surface to the user.
 | State | Signal in CustomerInfo | Notes |
 |---|---|---|
 | Canceled, still has access | `entitlement.unsubscribeDetectedAt != null` and `isActive == true` | Show "ends on [expirationDate]" |
-| Billing issue (grace or hold) | `entitlement.billingIssuesDetectedAt != null` | Payment failed, recovery in progress |
+| Billing issue (grace or hold) | `entitlement.billingIssueDetectedAt != null` | Payment failed, recovery in progress |
 | Paused | `entitlement.isActive == false` while product is still owned | Resume date requires REST API |
 | Active and renewing | `entitlement.willRenew == true` | Normal state |
 
