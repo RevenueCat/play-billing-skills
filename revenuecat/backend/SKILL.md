@@ -36,7 +36,7 @@ Before writing any backend code, confirm these facts about your deployment:
 - You know which `app_user_id` your SDK uses (the same identifier your auth system uses).
 - You have decided whether the backend needs real time state (REST API) or event driven state (webhooks).
 
-If your app only gates features inside the client, you may not need a backend component at all. RevenueCat verifies `CustomerInfo` server side before it reaches the SDK, and `EntitlementVerificationMode.INFORMATIONAL` or `.ENFORCED` adds signature verification on the client. Serve premium content from a server only when you can verify entitlement on the server.
+If your app only gates features inside the client, you may not need a backend component at all. RevenueCat verifies `CustomerInfo` server side before it reaches the SDK, and Trusted Entitlements (`EntitlementVerificationMode.INFORMATIONAL`, the default since SDK 8.11.0) adds signature verification on the client. Serve premium content from a server only when you can verify entitlement on the server.
 
 ## Phase 2: Plan
 

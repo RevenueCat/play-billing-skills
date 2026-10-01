@@ -1,6 +1,6 @@
 ---
 name: security
-description: Use this skill when hardening a RevenueCat integration on Android. Covers Trusted Entitlements response verification (INFORMATIONAL vs ENFORCED), why the server is always the authority, API key hygiene (public SDK key vs secret REST key), anonymous user identity, and purchase token protections RevenueCat provides automatically.
+description: Use this skill when hardening a RevenueCat integration on Android. Covers Trusted Entitlements response verification (INFORMATIONAL by default, with no public ENFORCED mode on Android), why the server is always the authority, API key hygiene (public SDK key vs secret REST key), anonymous user identity, and purchase token protections RevenueCat provides automatically.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -33,7 +33,7 @@ Confirm what RevenueCat already covers so you can focus on the real gaps.
 
 Ask the project these questions:
 
-- Is `EntitlementVerificationMode` set? If not, `CustomerInfo` responses are trusted without signature checking.
+- Is `EntitlementVerificationMode` still at its default, `INFORMATIONAL`, or did someone set it to `DISABLED`? With `DISABLED`, `CustomerInfo` responses are trusted without signature checking.
 - Is the SDK configured with the public Android key (starts with `goog_`) or has someone accidentally pasted the secret key into the client?
 - Are real users identified with `Purchases.logIn(yourUserId)`, or is the app still relying on anonymous `$RCAnonymousID:...`?
 - Do server endpoints that serve premium content verify entitlement server side, or do they trust a client sent flag?
@@ -46,13 +46,14 @@ Decide each of the following before changing code.
 
 | Mode | Failed verification does what | Pick when |
 |---|---|---|
-| `DISABLED` (default) | No signing happens | Only for quick prototypes |
-| `INFORMATIONAL` | Logged, access still granted | You want signal without risking false denials to real users |
-| `ENFORCED` | `EntitlementInfo.isActive` returns `false` | You accept some false negatives from proxies or VPNs in exchange for a strict client guarantee |
+| `INFORMATIONAL` (default since SDK 8.11.0) | Reported as `VerificationResult.FAILED`, access still granted | Keep it. Read the result and decide how your app reacts |
+| `DISABLED` | No signing happens | Only for quick prototypes |
+
+The Android SDK has no public `ENFORCED` mode, so `EntitlementVerificationMode.ENFORCED` does not compile.
 
 ### Decision B: Where is the authority?
 
-Even with `ENFORCED`, the client is not the authority for paid content. Decide whether each premium endpoint:
+Whatever the verification mode, the client is not the authority for paid content. Decide whether each premium endpoint:
 
 1. Calls the RevenueCat REST API per request, or
 2. Reads a local `has_entitlement` flag driven by RevenueCat webhooks.
@@ -65,9 +66,9 @@ If the app is in production, plan to call `Purchases.logIn("your_user_id")` with
 
 ## Phase 3: Execute
 
-### 3.1 Turn on response verification
+### 3.1 Keep response verification on
 
-Add the mode to `PurchasesConfiguration`:
+`INFORMATIONAL` is the default, so set it only if you want the configuration to be explicit:
 
 ```kotlin
 PurchasesConfiguration.Builder(context, apiKey)
@@ -86,13 +87,7 @@ when (customerInfo.entitlements.verification) {
 }
 ```
 
-Upgrade to `ENFORCED` once you have telemetry confirming `FAILED` is rare on real traffic:
-
-```kotlin
-.entitlementVerificationMode(EntitlementVerificationMode.ENFORCED)
-```
-
-In `ENFORCED`, a failed signature flips `isActive` to `false` on the affected entitlement.
+There is no `ENFORCED` mode to upgrade to on Android. If you want a failed signature to cost access in the app, handle `VerificationResult.FAILED` in your own code, and keep the server side check in 3.4 as the real gate.
 
 ### 3.2 Keep API keys in the right place
 
@@ -124,7 +119,7 @@ Do not rely on the anonymous id as a credential. It is a device scoped identifie
 
 ### 3.4 Enforce on the server, not on the client
 
-Even with `ENFORCED` mode, every server endpoint that serves paid content checks entitlement server side:
+Whatever the client verification mode, every server endpoint that serves paid content checks entitlement server side:
 
 ```python
 def get_premium_content(user_id):
@@ -139,7 +134,7 @@ Or read a local `has_pro` flag driven by RevenueCat webhooks and check that flag
 ## Phase 4: Verify
 
 - [ ] Android source contains only the public SDK key. Secret key grep is clean.
-- [ ] `EntitlementVerificationMode` is set (not `DISABLED`) and telemetry for `VerificationResult.FAILED` is watched.
+- [ ] `EntitlementVerificationMode` is not `DISABLED` (the default `INFORMATIONAL` is fine) and telemetry for `VerificationResult.FAILED` is watched.
 - [ ] Real users are identified through `Purchases.logIn`. Anonymous ids are only used for pre login flows.
 - [ ] Every paid content endpoint on your server verifies entitlement through the REST API or a webhook driven flag. None trust a client header.
 
@@ -148,7 +143,7 @@ Or read a local `has_pro` flag driven by RevenueCat webhooks and check that flag
 | Mistake | Why it hurts | Fix |
 |---|---|---|
 | Shipping the secret key in the app | An attacker who decompiles the APK can call admin REST endpoints | Public key in app, secret key only on server |
-| Leaving mode at `DISABLED` in production | A man in the middle can forge `CustomerInfo` responses | Set `INFORMATIONAL` or `ENFORCED` |
+| Setting the mode to `DISABLED` in production | A man in the middle can forge `CustomerInfo` responses | Keep the default `INFORMATIONAL` and watch `VerificationResult.FAILED` |
 | Treating the anonymous id as a credential | It is not secret and is shared across users of the same device | Call `logIn` with your authenticated user id |
 | Trusting `customerInfo` from the client on the server | A tampered client can claim any entitlement | Verify on the server via REST API or webhook driven DB |
 
