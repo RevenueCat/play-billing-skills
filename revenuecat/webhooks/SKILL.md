@@ -17,14 +17,14 @@ metadata:
 
 # RevenueCat Webhooks
 
-You configure one endpoint. RevenueCat posts one normalized JSON event schema for every store. Your job on the server side is to verify the signature, deduplicate by `event.id`, and dispatch per event type.
+You configure one endpoint. RevenueCat posts one normalized JSON event schema for every store. Your job on the server side is to authenticate the request, deduplicate by `event.id`, and dispatch per event type.
 
 ## Phase 1: Discover
 
 Confirm what you are wiring up before touching code.
 
 - You own a server side HTTPS endpoint that accepts POST with a JSON body.
-- You have the webhook secret from the RevenueCat dashboard under Integrations then Webhooks.
+- You set an authorization header value on the webhook integration in the RevenueCat dashboard under Integrations then Webhooks. If you also turn on HMAC webhook signing there, you have its signing secret.
 - You have durable storage to record processed event IDs and entitlement state per `app_user_id`.
 - You understand that RevenueCat has already mapped products to entitlements, so you branch on `event.type` and read `event.entitlement_ids`. You do not maintain a product to entitlement table on your backend.
 
@@ -76,22 +76,74 @@ Key decisions baked into this table:
 
 Wire up a handler that verifies, deduplicates, and dispatches.
 
-### Verify the signature and parse
+### Authenticate and parse
+
+RevenueCat sends the authorization header value you set on the webhook integration with every request. HMAC signing is optional. When it is on, each delivery also carries `X-RevenueCat-Webhook-Signature: t=<unix_timestamp>,v1=<hmac_sha256_hex>`, an HMAC-SHA256 of `"<t>.<raw body>"` keyed with the integration's signing secret. RevenueCat recomputes `t` and `v1` on every delivery attempt, retries included.
 
 ```kotlin
+// Fail at startup on a missing or blank value. A blank one would match an empty Authorization header.
+val expectedAuthorization: String = System.getenv("RC_WEBHOOK_AUTHORIZATION")?.takeIf { it.isNotBlank() }
+    ?: error("Set RC_WEBHOOK_AUTHORIZATION to the authorization header value from the RevenueCat dashboard")
+
 post("/revenuecat/webhook") {
-    val body = call.receiveText()
-    val signature = call.request.headers["X-RevenueCat-Signature"]
-    if (!verifySignature(body, signature, webhookSecret)) {
+    if (!constantTimeEquals(call.request.headers[HttpHeaders.Authorization], expectedAuthorization)) {
         call.respond(HttpStatusCode.Unauthorized); return@post
     }
-    val event = Json.decodeFromString<RevenueCatEnvelope>(body).event
+    // Keep the raw bytes: the HMAC covers them exactly as received, so parse JSON only after verifying.
+    val body = call.receive<ByteArray>()
+    if (hmacSigningEnabled &&
+        !verifyHmac(body, call.request.headers["X-RevenueCat-Webhook-Signature"], signingSecret)
+    ) {
+        call.respond(HttpStatusCode.Unauthorized); return@post
+    }
+    val event = webhookJson.decodeFromString<RevenueCatEnvelope>(body.decodeToString()).event
     handleEvent(event)
     call.respond(HttpStatusCode.OK)
 }
+
+fun constantTimeEquals(actual: String?, expected: String): Boolean =
+    actual != null && MessageDigest.isEqual(actual.toByteArray(), expected.toByteArray())
+
+fun verifyHmac(body: ByteArray, header: String?, secret: String, toleranceSeconds: Long = 300): Boolean {
+    val parts = header?.split(",")?.associate { it.substringBefore("=") to it.substringAfter("=") }
+        ?: return false
+    val t = parts["t"] ?: return false
+    val v1 = parts["v1"] ?: return false
+    val timestamp = t.toLongOrNull() ?: return false
+    val mac = Mac.getInstance("HmacSHA256").apply { init(SecretKeySpec(secret.toByteArray(), "HmacSHA256")) }
+    val expected = mac.doFinal("$t.".toByteArray() + body).joinToString("") { "%02x".format(it) }
+    return MessageDigest.isEqual(expected.toByteArray(), v1.toByteArray()) &&
+        abs(System.currentTimeMillis() / 1000 - timestamp) <= toleranceSeconds
+}
+
+// RevenueCat adds payload fields over time, so ignore the ones you do not model.
+val webhookJson = Json { ignoreUnknownKeys = true }
 ```
 
-Return 2xx as soon as the event is persisted. If processing is slow, enqueue it and acknowledge. A slow handler causes retries and duplicate deliveries.
+`t` is when RevenueCat signed that HTTP request, so the five minute tolerance only needs to cover clock skew and request latency, not retry delays.
+
+When signing is on, load `signingSecret` the same way. A missing or blank value must never turn into an open endpoint.
+
+Return 200 as soon as the event is persisted. RevenueCat treats any other status code as a failure and retries. If processing is slow, enqueue it and acknowledge. A slow handler causes retries and duplicate deliveries.
+
+### Model only the fields you use
+
+Event types carry different fields. `TRANSFER` has no `app_user_id`, and `entitlement_ids` and `expiration_at_ms` can be `null`, so keep those fields nullable.
+
+```kotlin
+@Serializable
+data class RevenueCatEnvelope(val event: RcEvent)
+
+@Serializable
+data class RcEvent(
+    val id: String,
+    val type: String,
+    @SerialName("app_user_id") val appUserId: String? = null,
+    @SerialName("product_id") val productId: String? = null,
+    @SerialName("entitlement_ids") val entitlementIds: List<String>? = null,
+    @SerialName("expiration_at_ms") val expirationAtMs: Long? = null,
+)
+```
 
 ### Deduplicate on event.id
 
@@ -199,13 +251,13 @@ Your `RENEWAL` branch must grant entitlements, not assume they already exist. If
 
 ## Verification Checklist
 
-- Signature verification rejects requests with missing or wrong `X-RevenueCat-Signature`.
+- Requests without the expected `Authorization` header get 401. With HMAC signing on, a missing, stale, or wrong `X-RevenueCat-Webhook-Signature` gets 401 too.
 - A replayed event with the same `event.id` is a no op and still returns 200.
 - `CANCELLATION` does not revoke access. The user retains entitlements until `expiration_at_ms`.
 - `EXPIRATION` revokes access for the IDs in `entitlement_ids`.
 - A `RENEWAL` arriving after an `EXPIRATION` restores access for the same `app_user_id`.
 - `BILLING_ISSUE` flags the account without revoking.
-- Handler returns 2xx within your retry window even when downstream work is async.
+- Handler returns 200 within your retry window even when downstream work is async. RevenueCat treats any other status as a failure.
 
 ## References
 
