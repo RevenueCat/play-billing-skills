@@ -42,7 +42,7 @@ Fetch offerings, launch the purchase, then read the result off `CustomerInfo`.
 
 ```kotlin
 val offerings = Purchases.sharedInstance.awaitOfferings()
-val pkg = offerings.current?.availablePackages?.first() ?: return
+val pkg = offerings.current?.availablePackages?.firstOrNull() ?: return
 ```
 
 Launch the purchase with `awaitPurchase`. It suspends until the RevenueCat backend verifies the token.
