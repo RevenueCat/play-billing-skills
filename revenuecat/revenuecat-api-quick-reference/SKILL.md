@@ -92,7 +92,8 @@ val result: PurchaseResult = Purchases.sharedInstance.awaitPurchase(
 val result = Purchases.sharedInstance.awaitPurchase(
     PurchaseParams.Builder(activity, newPackage)
         .oldProductId("old_product_id")
-        .googleReplacementMode(GoogleReplacementMode.WITH_TIME_PRORATION)
+        // Between base plans of the same subscription, only CHARGE_FULL_PRICE or WITHOUT_PRORATION works.
+        .replacementMode(StoreReplacementMode.WITH_TIME_PRORATION)
         .build()
 )
 ```
