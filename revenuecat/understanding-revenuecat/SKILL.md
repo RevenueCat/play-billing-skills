@@ -105,7 +105,7 @@ You offload verification complexity and take on a dependency. If the RevenueCat 
 | Feature | What it does | When it kicks in |
 |---|---|---|
 | Disk cache of `CustomerInfo` | Returns the last known server state for entitlement checks | Automatic, always on |
-| Offline Entitlements | Computes entitlements on the device from local Play Store purchases | Only when you explicitly configure it |
+| Offline Entitlements | Computes entitlements on the device from local Play Store purchases | Automatic when the backend is unavailable. Off in `MY_APP` mode and in Test Store |
 
 Neither is a full substitute for a reachable backend. Use both where they apply.
 

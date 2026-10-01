@@ -42,7 +42,7 @@ Before you write app code, decide what you actually need. Most apps need none.
 
 Ask:
 
-1. Do you want the default Google in app message? If yes, do nothing. The SDK calls `showInAppMessagesIfNeeded` on BillingClient connect.
+1. Do you want the default Google in app message? If yes, do nothing. The SDK calls `showInAppMessagesIfNeeded` each time an Activity starts.
 2. Do you want your own banner or dialog? If yes, read `billingIssueDetectedAt` from `CustomerInfo` and branch on `isActive`.
 3. Do you want to gate the message to specific screens? If yes, disable the automatic call and invoke `showInAppMessagesIfNeeded(activity)` yourself.
 4. Do you need a server side flag (for example, to send a recovery email)? If yes, handle the `BILLING_ISSUE` webhook. No app code required.
