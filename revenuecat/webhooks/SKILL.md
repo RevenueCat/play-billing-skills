@@ -55,7 +55,8 @@ Pick the right action for each event type before you write the handler.
 
 | Event type | Meaning | Handler action |
 |---|---|---|
-| `INITIAL_PURCHASE` | First paid transaction for this user and product. | Grant entitlements in `entitlement_ids`. |
+| `INITIAL_PURCHASE` | A new subscription started, including a free trial (`price` is 0). | Grant entitlements in `entitlement_ids`. |
+| `NON_RENEWING_PURCHASE` | A purchase that won't auto renew, such as a one time product. | Grant `entitlement_ids` if the product maps to any, and credit consumables by `product_id`. |
 | `RENEWAL` | Subscription renewed, including resubscription after an `EXPIRATION`. | Grant or extend entitlements in `entitlement_ids`. |
 | `CANCELLATION` | User turned off auto renew. Access continues until `expiration_at_ms`. | Schedule revocation at `expiration_at_ms`. Do not revoke now. |
 | `UNCANCELLATION` | User re enabled auto renew before expiry. | Cancel any scheduled revocation. Keep entitlements active. |
@@ -140,6 +141,7 @@ data class RcEvent(
     val type: String,
     @SerialName("app_user_id") val appUserId: String? = null,
     @SerialName("product_id") val productId: String? = null,
+    @SerialName("transaction_id") val transactionId: String? = null,
     @SerialName("entitlement_ids") val entitlementIds: List<String>? = null,
     @SerialName("expiration_at_ms") val expirationAtMs: Long? = null,
 )
@@ -166,6 +168,8 @@ suspend fun handleEvent(event: RcEvent) {
 suspend fun dispatch(e: RcEvent) = when (e.type) {
     "INITIAL_PURCHASE", "RENEWAL", "UNCANCELLATION" ->
         db.grantEntitlements(e.appUserId, e.entitlementIds, e.expirationAtMs)
+    "NON_RENEWING_PURCHASE" ->
+        db.recordOneTimePurchase(e.appUserId, e.productId, e.transactionId, e.entitlementIds)
     "CANCELLATION" ->
         db.scheduleRevocation(e.appUserId, e.entitlementIds, e.expirationAtMs)
     "EXPIRATION" ->
@@ -253,6 +257,7 @@ Your `RENEWAL` branch must grant entitlements, not assume they already exist. If
 
 - Requests without the expected `Authorization` header get 401. With HMAC signing on, a missing, stale, or wrong `X-RevenueCat-Webhook-Signature` gets 401 too.
 - A replayed event with the same `event.id` is a no op and still returns 200.
+- A `NON_RENEWING_PURCHASE` provisions the one time product. One time purchases never arrive as `INITIAL_PURCHASE`.
 - `CANCELLATION` does not revoke access. The user retains entitlements until `expiration_at_ms`.
 - `EXPIRATION` revokes access for the IDs in `entitlement_ids`.
 - A `RENEWAL` arriving after an `EXPIRATION` restores access for the same `app_user_id`.

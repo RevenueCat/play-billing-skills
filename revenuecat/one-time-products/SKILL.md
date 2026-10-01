@@ -26,7 +26,7 @@ Answer these before touching code.
 |---|---|
 | Is the product consumable or non consumable? | Mark consumables in the RevenueCat dashboard so the SDK calls `consumeAsync` for you. |
 | Do you read access through entitlements or transactions? | Prefer entitlements so access logic stays decoupled from product IDs. |
-| Do you need server notification of the purchase? | Use RevenueCat webhooks. The `INITIAL_PURCHASE` event fires for every new non subscription purchase. |
+| Do you need server notification of the purchase? | Use RevenueCat webhooks. One time purchases fire `NON_RENEWING_PURCHASE`. `INITIAL_PURCHASE` is only for new subscriptions. |
 
 Do not call `BillingClient.queryProductDetailsAsync`, `acknowledgePurchase`, or `consumeAsync` yourself once RevenueCat is integrated. The SDK owns the `BillingClient` instance.
 
@@ -89,7 +89,7 @@ try { /* awaitPurchase */ } catch (e: PurchasesTransactionException) {
 
 - Trust `result.customerInfo` from `awaitPurchase`. Do not grant access from optimistic local state.
 - Pending purchases do not grant entitlements. Register an `UpdatedCustomerInfoListener` so you react when the payment completes.
-- For server side provisioning, subscribe to the RevenueCat `INITIAL_PURCHASE` webhook. Do not reimplement Google Play Developer API verification.
+- For server side provisioning, handle the RevenueCat `NON_RENEWING_PURCHASE` webhook. A refund of a one time purchase arrives as `CANCELLATION`. Do not reimplement Google Play Developer API verification.
 
 ## References
 
