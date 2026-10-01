@@ -49,7 +49,7 @@ Decide which of the two paths fits.
 
 **Path B: Hand roll the integration.** If you must ship now, implement the Play Billing Library APIs for the target program directly. The RevenueCat SDK owns the `BillingClient` instance, so running raw `BillingClient` calls alongside it needs care.
 
-For Path B, set completion ownership so RevenueCat does not interfere with acknowledgement of purchases you are managing:
+For Path B, set completion ownership to your app. `PurchasesAreCompletedBy.MY_APP` is global: RevenueCat stops acknowledging every purchase, standard Play Store purchases included. Your own Play Billing Library code must then acknowledge or consume all of them within 3 days, or Google refunds them automatically.
 
 ```kotlin
 Purchases.configure(
@@ -78,13 +78,13 @@ What RevenueCat's SDK currently supports in this space, per the chapter:
 | External Offers | No dedicated SDK APIs. Implement via Play Billing Library alongside RevenueCat. |
 | External Payment Links | No dedicated SDK APIs. Implement via Play Billing Library alongside RevenueCat. |
 
-When you ship Path B, use `PurchasesAreCompletedBy.MY_APP` so acknowledgement stays in your hands for the purchases you manage, and leave the standard Play Store purchases to the RevenueCat SDK.
+When you ship Path B with `PurchasesAreCompletedBy.MY_APP`, every acknowledgement is in your hands. There is no per purchase split: in this mode RevenueCat does not acknowledge standard Play Store purchases either.
 
 Verification steps:
 
 - [ ] Standard Play Store purchases still flow through RevenueCat and appear in the dashboard.
 - [ ] Purchases made through the alternative billing path reach your backend and are reconciled with RevenueCat subscriber state.
-- [ ] Acknowledgement happens exactly once per purchase, with no double-handling between your code and the SDK.
+- [ ] Your code acknowledges or consumes every purchase within 3 days, standard Play Store purchases included. RevenueCat does not do it for you in `MY_APP` mode.
 
 ## References
 
