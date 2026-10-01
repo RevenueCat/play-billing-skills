@@ -115,14 +115,15 @@ Once you have the model above, pick the next skill based on what the user actual
 
 | User goal | Next skill |
 |---|---|
-| Install the SDK, wire up Gradle, add permissions, configure the Play Console product | `revenuecat/setup` |
-| Call `Purchases.configure`, pass an `appUserID`, set log level, attach attributes | `revenuecat/configuring-the-sdk` |
+| Create the app in the RevenueCat dashboard, upload Play credentials, set up products, entitlements, and offerings | `revenuecat/setup` |
+| Add the Gradle dependency, call `Purchases.configure`, pass an `appUserID`, set log level | `revenuecat/configuring-the-sdk` |
 | Fetch Offerings, show a paywall, call `purchase`, handle the result | `revenuecat/purchase-flow` |
-| Check `customerInfo.entitlements["..."]?.isActive`, gate features, listen for updates | `revenuecat/entitlements-and-customerinfo` |
-| Identify, alias, or log out a user | `revenuecat/user-identity` |
-| Handle restore purchases, cross device, promo codes | `revenuecat/restore-and-recovery` |
+| Check `customerInfo.entitlements["..."]?.isActive`, gate features, listen for updates | `revenuecat/subscription-states` |
+| Pick an app user ID strategy | `revenuecat/configuring-the-sdk` |
+| Log a user in or out | `revenuecat/subscription-states` |
+| Restore purchases on reinstall or a new device | `revenuecat/purchase-flow` |
 | Receive server side events from RevenueCat | `revenuecat/webhooks` |
-| Debug a specific purchase, receipt, or entitlement in production | `revenuecat/debugging` |
+| Look up a specific customer's purchases or entitlements in production | `revenuecat/backend` |
 
 If the user's goal does not match any row, stay here and keep clarifying intent before routing.
 
