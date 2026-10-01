@@ -58,17 +58,17 @@ Pick the right action for each event type before you write the handler.
 | `INITIAL_PURCHASE` | A new subscription started, including a free trial (`price` is 0). | Grant entitlements in `entitlement_ids`. |
 | `NON_RENEWING_PURCHASE` | A purchase that won't auto renew, such as a one time product. | Grant `entitlement_ids` if the product maps to any, and credit consumables by `product_id`. |
 | `RENEWAL` | Subscription renewed, including resubscription after an `EXPIRATION`. | Grant or extend entitlements in `entitlement_ids`. |
-| `CANCELLATION` | User turned off auto renew. Access continues until `expiration_at_ms`. | Schedule revocation at `expiration_at_ms`. Do not revoke now. |
-| `UNCANCELLATION` | User re enabled auto renew before expiry. | Cancel any scheduled revocation. Keep entitlements active. |
+| `CANCELLATION` | Auto renew was turned off, a renewal charge failed (`cancel_reason` is `BILLING_ERROR`), or the purchase was refunded (`CUSTOMER_SUPPORT`). | Re-read the customer and apply its current access. Reverse any consumable credit recorded for that `transaction_id`. |
+| `UNCANCELLATION` | User re enabled auto renew before expiry. | Keep entitlements active. |
 | `EXPIRATION` | Subscription actually ended. | Revoke entitlements now. |
 | `BILLING_ISSUE` | Payment failed. User may be in grace period or on hold. | Flag the account. Do not revoke yet. RevenueCat sends `EXPIRATION` if recovery fails. |
 | `PRODUCT_CHANGE` | User switched plan (upgrade, downgrade, or cross grade). | Update the product on record. Entitlement state follows `entitlement_ids`. |
 | `SUBSCRIBER_ALIAS` | Two app user IDs were merged into one identity. | Merge your local records for the aliased IDs. |
-| `TRANSFER` | A transaction moved from one app user ID to another. | Move entitlements from the old ID to the new ID. |
+| `TRANSFER` | Purchases and entitlements moved from the IDs in `transferred_from` to the IDs in `transferred_to`. The event has no `app_user_id`. | Move entitlements from `transferred_from` to `transferred_to`. Do not merge the two users. |
 
 Key decisions baked into this table:
 
-- `CANCELLATION` is not an access change. It is an intent signal. Revoking now is a bug that deletes paid access the user still owns.
+- A `CANCELLATION` does not say whether access ended, so read it from RevenueCat instead of deciding from `cancel_reason`. After an unsubscribe the user keeps access until `expiration_at_ms`, so revoking now deletes paid access the user still owns. After a billing error, access depends on the store and its grace period. After a refund, access usually ends now.
 - `EXPIRATION` is the access change. This is when you revoke.
 - Resubscription after an `EXPIRATION` fires `RENEWAL`, not `INITIAL_PURCHASE`. Your `RENEWAL` branch must be safe to run against a user whose entitlements are currently revoked, which means it must grant, not just extend.
 - `BILLING_ISSUE` is not revocation. Revoking on `BILLING_ISSUE` cuts off users who are still inside Google Play grace period or account hold.
@@ -118,7 +118,8 @@ fun verifyHmac(body: ByteArray, header: String?, secret: String, toleranceSecond
 }
 
 // RevenueCat adds payload fields over time, so ignore the ones you do not model.
-val webhookJson = Json { ignoreUnknownKeys = true }
+// A field the docs mark Always can still be null, so a null list falls back to its empty default.
+val webhookJson = Json { ignoreUnknownKeys = true; coerceInputValues = true }
 ```
 
 `t` is when RevenueCat signed that HTTP request, so the five minute tolerance only needs to cover clock skew and request latency, not retry delays.
@@ -144,6 +145,8 @@ data class RcEvent(
     @SerialName("transaction_id") val transactionId: String? = null,
     @SerialName("entitlement_ids") val entitlementIds: List<String>? = null,
     @SerialName("expiration_at_ms") val expirationAtMs: Long? = null,
+    @SerialName("transferred_from") val transferredFrom: List<String> = emptyList(),
+    @SerialName("transferred_to") val transferredTo: List<String> = emptyList(),
 )
 ```
 
@@ -170,24 +173,28 @@ suspend fun dispatch(e: RcEvent) = when (e.type) {
         db.grantEntitlements(e.appUserId, e.entitlementIds, e.expirationAtMs)
     "NON_RENEWING_PURCHASE" ->
         db.recordOneTimePurchase(e.appUserId, e.productId, e.transactionId, e.entitlementIds)
-    "CANCELLATION" ->
-        db.scheduleRevocation(e.appUserId, e.entitlementIds, e.expirationAtMs)
+    "CANCELLATION" -> {
+        db.syncFromRevenueCat(e.appUserId) // re-read GET /v1/subscribers/{app_user_id}
+        db.reverseOneTimePurchase(e.transactionId) // a cancelled one time purchase was refunded or revoked; no-op otherwise
+    }
     "EXPIRATION" ->
         db.revokeEntitlements(e.appUserId, e.entitlementIds)
     "BILLING_ISSUE" ->
         db.flagBillingIssue(e.appUserId)
     "PRODUCT_CHANGE" ->
         db.updateProduct(e.appUserId, e.productId, e.entitlementIds)
-    "SUBSCRIBER_ALIAS", "TRANSFER" ->
+    "SUBSCRIBER_ALIAS" ->
         db.mergeIdentity(e)
+    "TRANSFER" ->
+        db.moveEntitlements(from = e.transferredFrom, to = e.transferredTo)
     else -> Unit
 }
 ```
 
-Notes that match the handbook:
+Notes:
 
 - `grantEntitlements` on `RENEWAL` must be idempotent and additive so a resubscribe after `EXPIRATION` restores access.
-- `scheduleRevocation` stores a pending job keyed by `(app_user_id, entitlement_id)` that fires at `expiration_at_ms`. If an `UNCANCELLATION` arrives first, cancel the job. If an `EXPIRATION` arrives first, let the `EXPIRATION` handler revoke and drop the pending job.
+- `CANCELLATION` re-reads the customer instead of scheduling a revocation at `expiration_at_ms`. A scheduled job would have to be cancelled by every `RENEWAL` and `UNCANCELLATION`, and `EXPIRATION` already revokes when access ends.
 
 ### CANCELLATION payload (access continues)
 
@@ -202,13 +209,18 @@ Notes that match the handbook:
     "purchased_at_ms": 1700000000000,
     "expiration_at_ms": 1702592000000,
     "entitlement_ids": ["pro_access"],
+    "cancel_reason": "UNSUBSCRIBE",
     "store": "PLAY_STORE",
     "environment": "PRODUCTION"
   }
 }
 ```
 
-The user keeps `pro_access` until `1702592000000`. Schedule revocation for that timestamp.
+The user keeps `pro_access` until `1702592000000`, so the re-read still shows it active. The `EXPIRATION` sent at that time revokes it.
+
+A refund looks the same except `cancel_reason` is `CUSTOMER_SUPPORT`. Access usually ends now, so re-read the customer and apply what RevenueCat returns. Some refunds keep access, for example a Stripe refund issued without revoking. Auto renew can stay on after a refund, so a later `RENEWAL` may grant access again. For a one time purchase, also reverse the credit you recorded for its `transaction_id`.
+
+With `cancel_reason` `BILLING_ERROR`, a renewal charge failed. With a grace period the user keeps access and `EXPIRATION` arrives if it ends without recovery, while a Stripe subscription set to cancel on failed payment loses access right away. The re-read covers both.
 
 ### EXPIRATION payload (revoke now)
 
@@ -258,7 +270,8 @@ Your `RENEWAL` branch must grant entitlements, not assume they already exist. If
 - Requests without the expected `Authorization` header get 401. With HMAC signing on, a missing, stale, or wrong `X-RevenueCat-Webhook-Signature` gets 401 too.
 - A replayed event with the same `event.id` is a no op and still returns 200.
 - A `NON_RENEWING_PURCHASE` provisions the one time product. One time purchases never arrive as `INITIAL_PURCHASE`.
-- `CANCELLATION` does not revoke access. The user retains entitlements until `expiration_at_ms`.
+- A `CANCELLATION` re-reads the customer instead of revoking. After an unsubscribe the user keeps entitlements until the `EXPIRATION`, and a refunded one time purchase has its consumable credit reversed.
+- A `TRANSFER` moves entitlements from `transferred_from` to `transferred_to` and keeps the two users separate.
 - `EXPIRATION` revokes access for the IDs in `entitlement_ids`.
 - A `RENEWAL` arriving after an `EXPIRATION` restores access for the same `app_user_id`.
 - `BILLING_ISSUE` flags the account without revoking.
