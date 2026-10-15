@@ -107,7 +107,7 @@ Never ship the secret key in the Android APK, in a BuildConfig field, or in any 
 
 ### Webhook receiver outline
 
-Verifying the signature, deduplicating by `event.id`, and dispatching per event type, including the `CANCELLATION` branches by `cancel_reason`, is covered in [webhooks](../webhooks/). Point your webhook endpoint at that handler; this skill's job is the REST API and the decision to consume RevenueCat state instead of validating receipts yourself.
+Authenticating the request, deduplicating by `event.id`, and dispatching per event type, including why every event re-reads the customer, is covered in [webhooks](../webhooks/). Point your webhook endpoint at that handler; this skill's job is the REST API and the decision to consume RevenueCat state instead of validating receipts yourself.
 
 ### What not to build
 

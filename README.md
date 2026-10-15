@@ -193,7 +193,7 @@ Source: the [RevenueCat Android SDK guide](https://www.revenuecat.com/guides/rev
 | [`payment-recovery`](revenuecat/payment-recovery/) | Grace Period and Account Hold reflected in `CustomerInfo`, plus `showInAppMessages` |
 | [`catalog-management`](revenuecat/catalog-management/) | The two sided catalog flow: create in Play Console, import or map in the RevenueCat dashboard |
 | [`backend`](revenuecat/backend/) | The RevenueCat REST API: subscribers endpoint, grant and revoke entitlements, attributes, secret versus public key usage |
-| [`webhooks`](revenuecat/webhooks/) | Consume webhooks: normalized event schema, the access changing event types, idempotency, CANCELLATION versus EXPIRATION versus RENEWAL |
+| [`webhooks`](revenuecat/webhooks/) | Consume webhooks: request authentication, the normalized event schema, every event type, idempotency, and access taken from a re-read of the customer |
 | [`security`](revenuecat/security/) | Trusted Entitlements verification, server as the authority, API key hygiene, anonymous identity |
 | [`error-handling`](revenuecat/error-handling/) | Handle `PurchasesError`, the `PurchasesErrorCode` enum, the `userCancelled` flag, and the right UI per code |
 | [`alternative-billing`](revenuecat/alternative-billing/) | Scope alternative billing work with RevenueCat 10.x: what the SDK abstracts and what needs direct integration |
