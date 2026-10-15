@@ -36,14 +36,14 @@ Each cancellation type behaves differently with respect to access, refunds, RTDN
 
 ### Cancellation type matrix
 
-| Type | API or Trigger | Access After | Refund | Primary RTDN | canceledStateContext.cancellationReason |
+| Type | API or Trigger | Access After | Refund | Primary RTDN | canceledStateContext member |
 |---|---|---|---|---|---|
-| User initiated | Play Subscriptions Center | Until `expiryTime` | None (prorated not issued) | `SUBSCRIPTION_CANCELED` | `USER_CANCELED` |
-| Developer, user requested | `purchases.subscriptionsv2.cancel` with `USER_REQUESTED_STOP_RENEWAL` | Until `expiryTime` | None | `SUBSCRIPTION_CANCELED` | `DEVELOPER_CANCELED` |
-| Developer, your reason | `purchases.subscriptionsv2.cancel` with `DEVELOPER_REQUESTED_STOP_PAYMENTS` | Until `expiryTime` | None | `SUBSCRIPTION_CANCELED` | `DEVELOPER_CANCELED` |
-| System, payment failure | Automatic after grace + account hold | None from the moment account hold expires | None | `SUBSCRIPTION_CANCELED` | `SYSTEM_CANCELED` |
-| Replacement (plan change) | Plan change flow | Handled by new token | N/A | `SUBSCRIPTION_CANCELED` on old token | `REPLACED` |
-| Revoke | `purchases.subscriptionsv2.revoke` | Immediately terminated | Prorated refund issued by Google | `SUBSCRIPTION_REVOKED` | n/a (terminated) |
+| User initiated | Play Subscriptions Center | Until `expiryTime` | None (prorated not issued) | `SUBSCRIPTION_CANCELED` | `userInitiatedCancellation` |
+| Developer, user requested | `purchases.subscriptionsv2.cancel` with `USER_REQUESTED_STOP_RENEWALS` | Until `expiryTime` | None | `SUBSCRIPTION_CANCELED` | Not documented for this `cancellationType`; read whichever member is set |
+| Developer, your reason | `purchases.subscriptionsv2.cancel` with `DEVELOPER_REQUESTED_STOP_PAYMENTS` | Until `expiryTime` | None | `SUBSCRIPTION_CANCELED` | `developerInitiatedCancellation` |
+| System, payment failure | Automatic after grace + account hold | None from the moment account hold expires | None | `SUBSCRIPTION_CANCELED` | `systemInitiatedCancellation` |
+| Replacement (plan change) | Plan change flow | Handled by new token | N/A | `SUBSCRIPTION_PURCHASED` on the new token (`linkedPurchaseToken` = old token); old token may report `SUBSCRIPTION_EXPIRED` (DEFERRED) | `replacementCancellation` |
+| Revoke | `purchases.subscriptionsv2.revoke` | Immediately terminated | The refund type you pass (`fullRefund` or `proratedRefund`) | `SUBSCRIPTION_REVOKED` | n/a (terminated) |
 
 ### Pause versus cancel
 
@@ -76,7 +76,7 @@ fun hasActiveSubscription(
     val expiry = subscription.lineItems
         .firstOrNull()
         ?.expiryTime
-        ?.toEpochMilliseconds() ?: return false
+        ?.let { Instant.parse(it).toEpochMilli() } ?: return false
     return now < expiry
 }
 ```
@@ -88,14 +88,14 @@ fun logCancellationReason(
     subscription: SubscriptionPurchaseV2
 ) {
     val context = subscription.canceledStateContext ?: return
-    when (context.cancellationReason) {
-        "USER_CANCELED" -> analytics.trackChurn(
+    when {
+        context.userInitiatedCancellation != null -> analytics.trackChurn(
             reason = "user",
-            surveyResponse = context.userInitiatedCancellation
-                ?.cancelSurveyResult?.reason
+            surveyResponse = context.userInitiatedCancellation.cancelSurveyResult?.reason
         )
-        "SYSTEM_CANCELED" -> analytics.trackChurn(reason = "payment_failure")
-        "DEVELOPER_CANCELED" -> analytics.trackChurn(reason = "developer")
+        context.systemInitiatedCancellation != null -> analytics.trackChurn(reason = "payment_failure")
+        context.developerInitiatedCancellation != null -> analytics.trackChurn(reason = "developer")
+        context.replacementCancellation != null -> Unit // plan change, not churn
     }
 }
 ```
@@ -104,12 +104,12 @@ This mapping is what drives later winback decisions. A "too expensive" survey an
 
 ### Developer initiated cancellation
 
-Call `purchases.subscriptionsv2.cancel` with the package name, purchase token, and one of the two reasons:
+Call `purchases.subscriptionsv2.cancel` with the package name, purchase token, and body `{"cancellationContext": {"cancellationType": ...}}`:
 
-- `USER_REQUESTED_STOP_RENEWAL` when the user asked you to cancel.
-- `DEVELOPER_REQUESTED_STOP_PAYMENTS` when you are canceling for your own reasons.
+- `USER_REQUESTED_STOP_RENEWALS` when the user asked you to cancel (the user can restore it).
+- `DEVELOPER_REQUESTED_STOP_PAYMENTS` when you are canceling for your own reasons (cannot be restored; for installments it stops the next payment).
 
-Both leave access intact until `expiryTime`. Pick the right reason so `canceledStateContext` records accurate analytics.
+Both leave access intact until `expiryTime`. Store the `cancellationType` you sent and your own reason at cancel time: `developerInitiatedCancellation` has no fields, so `canceledStateContext` alone cannot tell the two apart.
 
 ### Pause RTDN handler
 
@@ -131,13 +131,13 @@ fun handlePauseNotification(
 ```kotlin
 val params = QueryPurchasesParams.newBuilder()
     .setProductType(ProductType.SUBS)
-    .setIncludeSuspendedSubscriptions(true)
+    .includeSuspendedSubscriptions(true)
     .build()
 
 val result = billingClient.queryPurchasesAsync(params)
 ```
 
-A suspended purchase returns `purchaseState == PURCHASED`. Do not grant access. Use it to drive a "paused, resume now" UI.
+Check `purchase.isSuspended`: when true, do not grant access. It covers both paused and account hold, so use a neutral "resume or fix payment" call to action to the subscriptions center, or ask your backend which state it is.
 
 ### Restore before expiry
 
@@ -155,37 +155,39 @@ The purchase token does not change on restore.
 ### Link a resubscribe to the original account
 
 ```kotlin
-fun handleResubscribe(new: SubscriptionPurchaseV2) {
-    val expired = new.expiredExternalAccountIdentifiers
-    val user = expired?.externalAccountId?.let {
-        database.findByExternalAccountId(it)
-    }
+fun handleResubscribe(new: SubscriptionPurchaseV2, newToken: String) {
+    // Read before acknowledging: outOfAppPurchaseContext is removed after acknowledgement.
+    val ctx = new.outOfAppPurchaseContext
+    val user = ctx?.expiredExternalAccountIdentifiers?.obfuscatedExternalAccountId
+        ?.let { database.findByObfuscatedAccountId(it) }
+        ?: ctx?.expiredPurchaseToken?.let { database.findUserByPurchaseToken(it) }
     if (user != null) {
-        database.addSubscription(user.id, new.purchaseToken, "ACTIVE")
+        database.addSubscription(user.id, newToken, "ACTIVE")
     } else {
         handleNewSubscription(new)
     }
 }
 ```
 
-Prerequisite: set `externalAccountId` on the original purchase with `BillingFlowParams.Builder.setExternalAccountId(userId)`. Without it, `expiredExternalAccountIdentifiers` is empty on resubscribe.
+Prerequisite: set `BillingFlowParams.Builder.setObfuscatedAccountId(hashedUserId)` on the original purchase. Without it, `expiredExternalAccountIdentifiers` carries no account ID; fall back to `expiredPurchaseToken`.
 
 ### Defer billing
 
 ```kotlin
-fun deferSubscription(
-    packageName: String,
-    purchaseToken: String
-) {
-    val current = getSubscriptionExpiry(packageName, purchaseToken)
-    val newExpiry = current.plus(14, ChronoUnit.DAYS)
+fun deferSubscription(packageName: String, purchaseToken: String) {
+    val sub = playApi.purchases().subscriptionsv2().get(packageName, purchaseToken).execute()
+    val request = DeferSubscriptionPurchaseRequest().setDeferralContext(
+        DeferralContext()
+            .setEtag(sub.etag)                       // required, from subscriptionsv2.get
+            .setDeferDuration("${14 * 24 * 3600}s")  // relative, 1 day to 1 year per call
+    )
     playApi.purchases().subscriptionsv2()
-        .defer(packageName, purchaseToken, DeferRequest(newExpiry))
-        .execute()
+        .defer(packageName, purchaseToken, request)
+        .execute() // returns itemExpiryTimeDetails[] with each item's new expiryTime
 }
 ```
 
-Constraints: minimum 1 day beyond current expiry, maximum 1 year, new expiry must be in the future. Deferral keeps the same token and can be applied multiple times. It does not work on canceled subscriptions.
+Constraints: `deferDuration` from 1 day to 1 year per call; all items in a subscription with add ons move by the same duration. Deferral keeps the same token and can be applied multiple times. It does not work on canceled subscriptions.
 
 ### Revoke immediately
 
@@ -195,26 +197,30 @@ fun revokeSubscription(
     purchaseToken: String,
     reason: String
 ) {
+    val request = RevokeSubscriptionPurchaseRequest().setRevocationContext(
+        RevocationContext().setProratedRefund(RevocationContextProratedRefund())
+    )
     playApi.purchases().subscriptionsv2()
-        .revoke(packageName, purchaseToken, RevokeRequest(reason))
+        .revoke(packageName, purchaseToken, request)
         .execute()
     database.findByPurchaseToken(purchaseToken)?.let {
         it.status = "REVOKED"
+        it.revokeReason = reason // local analytics only; the API call itself carries no reason
         database.update(it)
     }
 }
 ```
 
-Revocation is appropriate for confirmed fraud, serious terms of service violations, or proactive chargeback response. It is not a substitute for a standard cancel plus refund. Google issues a prorated refund automatically and sends `SUBSCRIPTION_REVOKED` so your backend can reconcile even if the local write failed.
+Revocation is appropriate for confirmed fraud, serious terms of service violations, or proactive chargeback response. It is not a substitute for a standard cancel plus refund. Google issues the refund type you chose (`fullRefund` or `proratedRefund`) and sends `SUBSCRIPTION_REVOKED` so your backend can reconcile even if the local write failed. `itemBasedRefund {productId}` is different: it revokes and fully refunds one item of a subscription with add ons, and the subscription stays active while other items remain.
 
 ## Winback Eligibility Checks
 
-Use the `canceledStateContext.cancellationReason` from Phase 3 to decide who is eligible for a winback offer:
+Use the `canceledStateContext` member from Phase 3 to decide who is eligible for a winback offer:
 
-- `USER_CANCELED` with a price related survey answer: discount offer.
-- `SYSTEM_CANCELED`: payment method update prompt, not a discount.
-- `DEVELOPER_CANCELED` with `DEVELOPER_REQUESTED_STOP_PAYMENTS` due to fraud or TOS: exclude from winback.
-- `REPLACED`: not a churn event, exclude.
+- `userInitiatedCancellation` with a price related survey answer: discount offer.
+- `systemInitiatedCancellation`: payment method update prompt, not a discount.
+- `developerInitiatedCancellation` where your own records show you canceled for fraud or TOS: exclude from winback.
+- `replacementCancellation`: not a churn event, exclude.
 
 A paused subscriber is not a winback candidate either. They have already signaled intent to return, so the right surface is a resume prompt, not a discount.
 

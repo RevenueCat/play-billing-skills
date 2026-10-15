@@ -53,6 +53,7 @@ A typical lookup looks like this:
 | State | Access | Description |
 |-------|--------|-------------|
 | PENDING | No | Purchase initiated, payment not yet processed |
+| PENDING_PURCHASE_CANCELED | No | Pending transaction canceled; if `linkedPurchaseToken` is set, the previous subscription is unaffected |
 | ACTIVE | Yes | Subscription is paid and current |
 | IN_GRACE_PERIOD | Yes | Payment failed, Google is retrying, user keeps access |
 | ON_HOLD | No | Grace period expired, access revoked, awaiting payment fix |
@@ -67,18 +68,18 @@ Every edge in the diagram. Columns: origin state, destination state, trigger, RT
 | From | To | Trigger | RTDN |
 |------|----|---------|------|
 | PENDING | ACTIVE | Payment completes | `SUBSCRIPTION_PURCHASED` (4) |
-| PENDING | EXPIRED | Payment fails or times out | `SUBSCRIPTION_PENDING_PURCHASE_CANCELED` (20) |
+| PENDING | PENDING_PURCHASE_CANCELED | Pending payment canceled or expired | `SUBSCRIPTION_PENDING_PURCHASE_CANCELED` (20) |
 | ACTIVE | ACTIVE | Successful renewal | `SUBSCRIPTION_RENEWED` (2) |
 | ACTIVE | IN_GRACE_PERIOD | Renewal fails, grace period enabled | `SUBSCRIPTION_IN_GRACE_PERIOD` (6) |
 | ACTIVE | ON_HOLD | Renewal fails, no grace, account hold enabled | `SUBSCRIPTION_ON_HOLD` (5) |
 | ACTIVE | CANCELED | User or developer cancels | `SUBSCRIPTION_CANCELED` (3) |
 | ACTIVE | EXPIRED | Revoked or refunded | `SUBSCRIPTION_REVOKED` (12) |
 | ACTIVE | PAUSED | Pause takes effect at end of period | `SUBSCRIPTION_PAUSED` (10) |
-| IN_GRACE_PERIOD | ACTIVE | Payment recovered | `SUBSCRIPTION_RECOVERED` (1) |
+| IN_GRACE_PERIOD | ACTIVE | Payment recovered (renewal date unchanged) | `SUBSCRIPTION_RENEWED` (2) |
 | IN_GRACE_PERIOD | ON_HOLD | Grace expires without payment | `SUBSCRIPTION_ON_HOLD` (5) |
 | IN_GRACE_PERIOD | EXPIRED | Grace expires, no account hold | `SUBSCRIPTION_EXPIRED` (13) |
 | ON_HOLD | ACTIVE | User fixes payment | `SUBSCRIPTION_RECOVERED` (1) |
-| ON_HOLD | EXPIRED | Account hold period expires | `SUBSCRIPTION_EXPIRED` (13) |
+| ON_HOLD | EXPIRED | Account hold period expires | `SUBSCRIPTION_CANCELED` (3), then `SUBSCRIPTION_EXPIRED` (13) |
 | PAUSED | ACTIVE | Pause ends, payment succeeds | `SUBSCRIPTION_RECOVERED` (1) |
 | PAUSED | ON_HOLD | Pause ends, payment fails | `SUBSCRIPTION_ON_HOLD` (5) |
 | CANCELED | ACTIVE | User restores before expiration | `SUBSCRIPTION_RESTARTED` (7) |
@@ -113,9 +114,9 @@ Every edge in the diagram. Columns: origin state, destination state, trigger, RT
 | Window | Duration | What Happens |
 |--------|----------|--------------|
 | Acknowledgement | 3 days | Unacknowledged purchases auto refund |
-| Grace period | 1 to 30 days, configurable | User keeps access while Google retries |
+| Grace period | 0 to 30 days (not longer than the billing period), configurable | User keeps access while Google retries |
 | Silent grace period | 1 day minimum | Applies even when grace is set to 0 days |
-| Account hold | Up to 30 days, configurable | User loses access, can recover by fixing payment |
+| Account hold | 0 to 60 days; default 60 minus grace; grace + hold total 30 to 60 days | User loses access, can recover by fixing payment |
 | Token validity | 60 days post expiration | API calls still succeed in this window |
 | Pause duration | 1 week to 3 months | Depends on billing period |
 
@@ -126,7 +127,7 @@ Each row tells you what to do when the RTDN lands. Pair this with the access rul
 | Transition | Your handler should |
 |------------|----------------------|
 | PENDING to ACTIVE | Acknowledge within 3 days, provision entitlement, store the purchase token |
-| PENDING to EXPIRED | Clean up the pending record, do not provision access |
+| PENDING to PENDING_PURCHASE_CANCELED | Clean up the pending record, do not provision; for a pending plan change or top up keep the old token's entitlement |
 | ACTIVE to ACTIVE (renewal) | Extend the entitlement to the new `expiryTime`, keep the same token |
 | ACTIVE to IN_GRACE_PERIOD | Keep access on, surface a payment warning, trigger In App Messaging |
 | ACTIVE to ON_HOLD | Revoke access, tell the user to fix payment in Play |
