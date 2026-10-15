@@ -63,8 +63,20 @@ Pick the right action for each event type before you write the handler.
 | `EXPIRATION` | Subscription actually ended. | Revoke entitlements now. |
 | `BILLING_ISSUE` | Payment failed. User may be in grace period or on hold. | Flag the account. Do not revoke yet. RevenueCat sends `EXPIRATION` if recovery fails. |
 | `PRODUCT_CHANGE` | User switched plan (upgrade, downgrade, or cross grade). | Update the product on record. Entitlement state follows `entitlement_ids`. |
-| `SUBSCRIBER_ALIAS` | Two app user IDs were merged into one identity. | Merge your local records for the aliased IDs. |
+| `SUBSCRIBER_ALIAS` | Deprecated. New projects don't receive it. In legacy projects, a new app user ID was registered for an existing customer. | Merge your local records for the aliased IDs. |
 | `TRANSFER` | Purchases and entitlements moved from the IDs in `transferred_from` to the IDs in `transferred_to`. The event has no `app_user_id`. | Move entitlements from `transferred_from` to `transferred_to`. Do not merge the two users. |
+| `SUBSCRIPTION_PAUSED` | Google Play only. The subscription will pause at the end of the current period. `auto_resume_at_ms` says when it resumes. | Do not revoke. Revoke on the later `EXPIRATION` whose `expiration_reason` is `SUBSCRIPTION_PAUSED`. |
+| `SUBSCRIPTION_EXTENDED` | The current period's expiration was pushed back, for example through the store's API. On Google Play it can also mean Google deferred a renewal charge by less than 24 hours. | Re-read the customer and apply the new expiration. |
+| `TEMPORARY_ENTITLEMENT_GRANT` | RevenueCat granted short term access (at most 24 hours) because a store could not validate a purchase. Carries the common fields and `app_user_id`, sometimes `store`, and no entitlement or expiration fields. | Re-read the customer to apply the grant. Expect `INITIAL_PURCHASE` or `EXPIRATION` later. |
+| `REFUND_REVERSED` | App Store only. A refund was reversed. | Re-read the customer and restore access. |
+| `PRICE_INCREASE_CONSENT_REQUIRED`, `PRICE_INCREASE_CONSENT_APPROVED` | A price increase needs, or got, the customer's consent before the subscription renews at the new price. | No access change. |
+| `VIRTUAL_CURRENCY_TRANSACTION` | A virtual currency balance changed. `source` says why: an in app purchase, an admin or server API call, the client SDK, an expiration, or an ad reward. | Update balances if you mirror them. No entitlement change. |
+| `INVOICE_ISSUANCE` | RevenueCat Billing only. An unpaid invoice was issued. | No access change. |
+| `EXPERIMENT_ENROLLMENT` | The customer was enrolled in an experiment. | No access change. |
+| `PURCHASE_REDEEMED` | A web purchase (Stripe, Paddle, or RevenueCat Billing) was redeemed in the app. `redemption_outcome` says how: `transfer` also sends `TRANSFER`, `alias` links the redeemer IDs in `redeemed_by` to the purchaser without a `TRANSFER`, and `redeemer_owns` changes nothing. | Re-read each customer in `redeemed_by`, so an alias redemption grants access in your records. |
+| `TEST` | A test event sent from the dashboard. | Return 200 and change nothing. |
+
+When an event carries less than you need, re-read the customer with `GET /v1/subscribers/{app_user_id}`. RevenueCat recommends this after any webhook.
 
 Key decisions baked into this table:
 
@@ -130,7 +142,7 @@ Return 200 as soon as the event is persisted. RevenueCat treats any other status
 
 ### Model only the fields you use
 
-Event types carry different fields. `TRANSFER` has no `app_user_id`, and `entitlement_ids` and `expiration_at_ms` can be `null`, so keep those fields nullable.
+Event types carry different fields. `TRANSFER` and `PURCHASE_REDEEMED` have no `app_user_id`, and `entitlement_ids` and `expiration_at_ms` can be `null`, so keep those fields nullable.
 
 ```kotlin
 @Serializable
@@ -147,6 +159,7 @@ data class RcEvent(
     @SerialName("expiration_at_ms") val expirationAtMs: Long? = null,
     @SerialName("transferred_from") val transferredFrom: List<String> = emptyList(),
     @SerialName("transferred_to") val transferredTo: List<String> = emptyList(),
+    @SerialName("redeemed_by") val redeemedBy: List<String> = emptyList(),
 )
 ```
 
@@ -187,7 +200,11 @@ suspend fun dispatch(e: RcEvent) = when (e.type) {
         db.mergeIdentity(e)
     "TRANSFER" ->
         db.moveEntitlements(from = e.transferredFrom, to = e.transferredTo)
-    else -> Unit
+    "SUBSCRIPTION_EXTENDED", "TEMPORARY_ENTITLEMENT_GRANT", "REFUND_REVERSED" ->
+        db.syncFromRevenueCat(e.appUserId) // re-read GET /v1/subscribers/{app_user_id}
+    "PURCHASE_REDEEMED" ->
+        e.redeemedBy.forEach { db.syncFromRevenueCat(it) }
+    else -> Unit // SUBSCRIPTION_PAUSED, TEST, and the other events that change no access
 }
 ```
 
@@ -275,6 +292,7 @@ Your `RENEWAL` branch must grant entitlements, not assume they already exist. If
 - `EXPIRATION` revokes access for the IDs in `entitlement_ids`.
 - A `RENEWAL` arriving after an `EXPIRATION` restores access for the same `app_user_id`.
 - `BILLING_ISSUE` flags the account without revoking.
+- `SUBSCRIPTION_PAUSED` keeps access. The `EXPIRATION` with `expiration_reason` `SUBSCRIPTION_PAUSED` revokes it.
 - Handler returns 200 within your retry window even when downstream work is async. RevenueCat treats any other status as a failure.
 
 ## References

@@ -24,10 +24,10 @@ Confirm the following before invoking a plan change:
 
 - The user has exactly one active Google Play subscription you intend to replace.
 - You have a fresh `CustomerInfo` from `Purchases.sharedInstance.awaitCustomerInfo()` or a cached value from a recent listener callback.
-- You have the target `Package` resolved from `offerings.current` (see `fetch-offerings` skill).
+- You have the target `Package` resolved from `offerings.current` (see `revenuecat/purchase-flow`).
 - Google Play Billing Library 7+ is on the classpath via the RevenueCat SDK.
 
-Skip this skill if the user has no active subscription. For a fresh purchase, use `make-purchase` instead.
+Skip this skill if the user has no active subscription. For a fresh purchase, use `revenuecat/purchase-flow` instead.
 
 ## Phase 2: Plan (pick a replacement mode)
 
@@ -68,7 +68,7 @@ val customerInfo = Purchases.sharedInstance.awaitCustomerInfo()
 val currentProductId = customerInfo.activeSubscriptions
     .firstOrNull()
     ?.substringBefore(":")
-    ?: return  // nothing active, route to make-purchase instead
+    ?: return  // nothing active, route to revenuecat/purchase-flow instead
 
 val newPackage = offerings.current
     ?.availablePackages
@@ -86,7 +86,7 @@ try {
     val result = Purchases.sharedInstance.awaitPurchase(params)
     // result.customerInfo reflects the new subscription
 } catch (e: PurchasesTransactionException) {
-    if (!e.userCancelled) showError(e.error.message)
+    if (!e.userCancelled) showError(userFacingMessage(e.error)) // mapping in revenuecat/error-handling
 }
 ```
 

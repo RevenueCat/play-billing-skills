@@ -17,7 +17,7 @@ metadata:
 
 Google runs several programs that let you collect payment outside standard Play Store billing. This skill tells you which pieces the RevenueCat Android SDK covers today and which ones you implement yourself against the Play Billing Library.
 
-Per the handbook chapter, RevenueCat has limited support for these programs as of SDK 9.x. Treat that as the status of record; check the RevenueCat changelog for any newer SDK releases before you start work.
+Per the handbook chapter, RevenueCat has limited support for these programs, and that still holds as of SDK 10.x. Check the RevenueCat changelog for any newer SDK releases before you start work.
 
 ## Phase 1: Discovery
 
@@ -28,7 +28,7 @@ Answer these before writing any code.
 | Which program are you targeting? | User Choice Billing, Alternative Billing Only, External Offers, and External Payment Links each have different Play requirements. |
 | Is your app eligible in the target region? | Google gates these programs by country and app category. You enroll through Play Console, not through RevenueCat. |
 | Are you using RevenueCat Web Billing instead? | RevenueCat's web checkout is a separate product from Google's alternative billing. Do not conflate the two. |
-| Which RevenueCat SDK version are you on? | Support evolves per release. What is unsupported in SDK 9.x may land later. |
+| Which RevenueCat SDK version are you on? | Support evolves per release. What is unsupported in SDK 10.x may land later. |
 
 If you actually want to sell subscriptions via a RevenueCat-hosted web checkout, that is not one of Google's alternative billing programs. Use `Offering.webCheckoutURL` or `Package.webCheckoutURL`:
 

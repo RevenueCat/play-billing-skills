@@ -253,7 +253,7 @@ try {
     when (e.error.code) {
         PurchasesErrorCode.PaymentPendingError -> showPendingUi()
         PurchasesErrorCode.NetworkError -> showRetry()
-        else -> showGenericError(e.error.message)
+        else -> showGenericError(userFacingMessage(e.error)) // mapping in revenuecat/error-handling
     }
 }
 ```

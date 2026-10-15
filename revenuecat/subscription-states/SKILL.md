@@ -143,7 +143,7 @@ Purchases.sharedInstance.updatedCustomerInfoListener =
     }
 ```
 
-The listener does not fire when the SDK starts with a cache hit and nothing changed. Always call `awaitCustomerInfo()` on launch in addition to setting the listener.
+Setting the listener delivers the cached `CustomerInfo` right away, unless that same value was already sent to a listener, then fires again whenever it changes. Still call `awaitCustomerInfo()` on launch: a fresh install has no cache to deliver, and a cached value can be stale.
 
 ### Test matrix
 
