@@ -33,7 +33,7 @@ Two signals matter in the SDK:
 - `EntitlementInfo.billingIssueDetectedAt` is non null from the moment Google reports a billing problem until the user resolves it.
 - `EntitlementInfo.isActive` tells you whether they still have access.
 
-On the backend, a `BILLING_ISSUE` webhook fires once per transition. You do not decode RTDNs.
+On the backend, one `BILLING_ISSUE` webhook (plus a `CANCELLATION` with `cancel_reason` `BILLING_ERROR`) fires when the failure is first detected; account hold does not send another `BILLING_ISSUE`. When the grace period ends without recovery and the subscription enters account hold, RevenueCat sends `EXPIRATION` (`expiration_reason` `BILLING_ERROR`); a later recovery, during grace or hold, sends `RENEWAL`. You do not decode RTDNs.
 
 ## Phase 2: Plan
 
@@ -41,7 +41,7 @@ Before you write app code, decide what you actually need. Most apps need none.
 
 Ask:
 
-1. Do you want the default Google in app message? If yes, do nothing. The SDK calls `showInAppMessagesIfNeeded` on BillingClient connect.
+1. Do you want the default Google in app message? If yes, do nothing. The SDK calls `showInAppMessagesIfNeeded` (for `InAppMessageType.BILLING_ISSUES`) each time an Activity starts.
 2. Do you want your own banner or dialog? If yes, read `billingIssueDetectedAt` from `CustomerInfo` and branch on `isActive`.
 3. Do you want to gate the message to specific screens? If yes, disable the automatic call and invoke `showInAppMessagesIfNeeded(activity)` yourself.
 4. Do you need a server side flag (for example, to send a recovery email)? If yes, handle the `BILLING_ISSUE` webhook. No app code required.
@@ -79,25 +79,20 @@ Read the entitlement and branch on both flags:
 ```kotlin
 val entitlement = customerInfo.entitlements["pro_access"]
 when {
-    entitlement == null || !entitlement.isActive ->
-        showSubscribeScreen()
-    entitlement.billingIssueDetectedAt != null && entitlement.isActive ->
-        showGracePeriodWarning()
-    entitlement.billingIssueDetectedAt != null && !entitlement.isActive ->
-        showAccountHoldScreen()
-    else ->
-        showPremiumContent()
+    entitlement == null -> showSubscribeScreen()
+    entitlement.billingIssueDetectedAt != null && entitlement.isActive -> showGracePeriodWarning()
+    entitlement.billingIssueDetectedAt != null -> showAccountHoldScreen()
+    !entitlement.isActive -> showSubscribeScreen()
+    else -> showPremiumContent()
 }
 ```
 
 ### Send the user to fix payment
 
-`CustomerInfo.managementURL` points to the Google Play subscription page:
+Send the user to Google Play's subscription page with `Purchases.sharedInstance.showManageSubscriptions(activity)` (SDK 10.18.0+). It uses `managementURL` when present and otherwise opens Google Play's subscriptions page, which covers account hold, where `managementURL` is null.
 
 ```kotlin
-customerInfo.managementURL?.let { url ->
-    startActivity(Intent(Intent.ACTION_VIEW, url))
-}
+Purchases.sharedInstance.showManageSubscriptions(activity)
 ```
 
 ## Phase 4: Verify

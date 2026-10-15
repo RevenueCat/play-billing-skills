@@ -128,8 +128,10 @@ The skills target the current stable major of each layer: Play Billing Library 9
 
 | Layer | Major targeted | Reference |
 |---|---|---|
-| Google Play Billing Library | 9.x | <https://developer.android.com/google/play/billing/release-notes> |
-| RevenueCat Android SDK (purchases-android) | 10.x | <https://github.com/RevenueCat/purchases-android/releases> |
+| Google Play Billing Library | 9.x (checked against 9.1.0) | <https://developer.android.com/google/play/billing/release-notes> |
+| RevenueCat Android SDK (purchases-android) | 10.x (checked against 10.27.1) | <https://github.com/RevenueCat/purchases-android/releases> |
+
+RevenueCat Android SDK 10.x bundles Play Billing Library 8.3.0, so PBL 9.1 billing choice is not available through the RevenueCat SDK.
 
 ## Contributing
 
@@ -151,13 +153,13 @@ Source: the [Google Play Billing guide](https://www.revenuecat.com/guides/google
 | [`subscriptions`](google-play/subscriptions/) | Model the three tier Subscription, Base Plan, Offer hierarchy and shape your catalog |
 | [`one-time-products`](google-play/one-time-products/) | Launch, acknowledge, and consume consumables and non consumables, including pending transactions |
 | [`purchase-flow`](google-play/purchase-flow/) | Build `BillingFlowParams`, launch the flow, and handle every `BillingResult` in `PurchasesUpdatedListener` |
-| [`plan-changes`](google-play/plan-changes/) | Upgrades, downgrades, and plan switches with `setSubscriptionUpdateParams` and the six replacement modes |
-| [`price-changes`](google-play/price-changes/) | Opt out decreases versus opt in increases, the notification timeline, and the `SUBSCRIPTION_PENDING` state |
-| [`subscription-states`](google-play/subscription-states/) | Map a subscription to the seven states and decide what access to grant in each |
+| [`plan-changes`](google-play/plan-changes/) | Upgrades, downgrades, and plan switches with product level `SubscriptionProductReplacementParams` (PBL 8.1+), the replacement modes, and `KEEP_EXISTING` for add ons |
+| [`price-changes`](google-play/price-changes/) | Price decreases, opt in versus opt out increases, the notification timeline, and the `OUTSTANDING` price change state |
+| [`subscription-states`](google-play/subscription-states/) | Map a subscription to the eight states and decide what access to grant in each |
 | [`subscription-state-diagram`](google-play/subscription-state-diagram/) | The full subscription state machine with every RTDN triggered transition in one diagram |
 | [`cancellations-pauses-winback`](google-play/cancellations-pauses-winback/) | User and system cancellation, developer revoke and refund, pause and resume, and winback offers |
 | [`payment-recovery`](google-play/payment-recovery/) | Grace Period versus Account Hold, the RTDN signals between stages, and the in app messaging that drives recovery |
-| [`rtdn`](google-play/rtdn/) | Set up Real Time Developer Notifications end to end: Cloud Pub/Sub, message parsing, and all 22 subscription types |
+| [`rtdn`](google-play/rtdn/) | Set up Real Time Developer Notifications end to end: Cloud Pub/Sub, message parsing, and all 18 subscription notification types |
 | [`rtdn-reference`](google-play/rtdn-reference/) | Quick lookup for every RTDN type with integer codes, triggers, and recommended handling |
 | [`catalog-management`](google-play/catalog-management/) | Manage product and subscription catalogs programmatically via the Play Developer API |
 | [`play-developer-api-reference`](google-play/play-developer-api-reference/) | Quick reference for the billing related Play Developer API REST endpoints, scopes, and request shapes |
@@ -165,10 +167,10 @@ Source: the [Google Play Billing guide](https://www.revenuecat.com/guides/google
 | [`security`](google-play/security/) | Harden against fraud: server side verification, replay protection, device fingerprinting, velocity checks |
 | [`error-handling`](google-play/error-handling/) | Classify every response code into recoverable, non recoverable, and user driven, then build a retry plan |
 | [`billing-response-codes`](google-play/billing-response-codes/) | Reference lookup for every `BillingResponseCode` and sub response code (PBL 9.x) |
-| [`alternative-billing`](google-play/alternative-billing/) | User choice billing, alternative billing only, external offers, and regional eligibility |
+| [`alternative-billing`](google-play/alternative-billing/) | User choice billing, alternative billing only, billing choice (PBL 9.1), external offers and links, and regional eligibility |
 | [`testing`](google-play/testing/) | License testers, static test responses, sandbox purchases, and subscription lifecycle acceleration |
-| [`pbl-v7-to-v8-migration`](google-play/pbl-v7-to-v8-migration/) | Migrate from Play Billing Library 7.x to 8.x: breaking changes, renames, verification |
-| [`pbl-v8-to-v9-migration`](google-play/pbl-v8-to-v9-migration/) | Migrate from 8.x to 9.x: the small v9 delta, `targetSdk` 35, and the reclassified error |
+| [`pbl-v7-to-v8-migration`](google-play/pbl-v7-to-v8-migration/) | Migrate from Play Billing Library 7.x to 8.x: removed APIs and replacements, the minSdk 23 floor, verification |
+| [`pbl-v8-to-v9-migration`](google-play/pbl-v8-to-v9-migration/) | Migrate from 8.x to 9.x: the removed `SkuDetails` era types, the compileSdk 35 floor, and the reclassified error |
 | [`pbl-v7-to-v9-migration`](google-play/pbl-v7-to-v9-migration/) | Migrate 7.x straight to 9.x as a two stage plan (v7 to v8, then the v8 to v9 delta) |
 
 ### `revenuecat/`: RevenueCat Android SDK (20 skills)
@@ -178,20 +180,20 @@ Source: the [RevenueCat Android SDK guide](https://www.revenuecat.com/guides/rev
 | Skill | What it does |
 |---|---|
 | [`understanding-revenuecat`](revenuecat/understanding-revenuecat/) | Orient an agent to the SDK architecture and how Products, Packages, Offerings, Entitlements, and CustomerInfo connect |
-| [`setup`](revenuecat/setup/) | Create the app in the dashboard, upload Google Play service account credentials, configure entitlements and offerings, get the API key |
+| [`setup`](revenuecat/setup/) | Create the app in the dashboard, upload Google Play service account credentials, connect Real Time Developer Notifications, configure entitlements and offerings, get the API key |
 | [`configuring-the-sdk`](revenuecat/configuring-the-sdk/) | Add and configure the SDK: Gradle dependency, `Purchases.configure`, initial app user id strategy, log level |
 | [`revenuecat-vs-raw-billing`](revenuecat/revenuecat-vs-raw-billing/) | Decide RevenueCat versus raw Play Billing with a side by side of what each handles |
 | [`subscriptions`](revenuecat/subscriptions/) | Model subscriptions through Offerings, Packages, StoreProduct, SubscriptionOption, PricingPhase |
 | [`one-time-products`](revenuecat/one-time-products/) | Sell one time products with `awaitPurchase`, letting the SDK acknowledge or consume automatically |
 | [`purchase-flow`](revenuecat/purchase-flow/) | Implement a purchase with `awaitPurchase`, read `CustomerInfo` entitlements, and restore |
-| [`plan-changes`](revenuecat/plan-changes/) | Upgrades, downgrades, and plan switches via `GoogleProductChangeInfo` and SDK managed token chaining |
-| [`price-changes`](revenuecat/price-changes/) | Roll out price changes with RevenueCat's automatic confirmation flow handling |
+| [`plan-changes`](revenuecat/plan-changes/) | Upgrades, downgrades, and plan switches via `oldProductId` and `StoreReplacementMode`, with SDK managed token chaining |
+| [`price-changes`](revenuecat/price-changes/) | Roll out Google Play price changes with RevenueCat: legacy price cohorts, opt in versus opt out increases, the required in app notice, and the consent webhooks |
 | [`subscription-states`](revenuecat/subscription-states/) | Gate access via `CustomerInfo` and `entitlement.isActive`, drilling into `willRenew` and `periodType` when needed |
-| [`cancellations-pauses-winback`](revenuecat/cancellations-pauses-winback/) | Surface cancellation, pause, and winback state from `CustomerInfo` and the REST API |
+| [`cancellations-pauses-winback`](revenuecat/cancellations-pauses-winback/) | Surface cancellation, pause, and winback state from `CustomerInfo` and webhooks |
 | [`payment-recovery`](revenuecat/payment-recovery/) | Grace Period and Account Hold reflected in `CustomerInfo`, plus `showInAppMessages` |
 | [`catalog-management`](revenuecat/catalog-management/) | The two sided catalog flow: create in Play Console, import or map in the RevenueCat dashboard |
 | [`backend`](revenuecat/backend/) | The RevenueCat REST API: subscribers endpoint, grant and revoke entitlements, attributes, secret versus public key usage |
-| [`webhooks`](revenuecat/webhooks/) | Consume webhooks: normalized event schema, full event list, idempotency, CANCELLATION versus EXPIRATION versus RENEWAL |
+| [`webhooks`](revenuecat/webhooks/) | Consume webhooks: normalized event schema, the access changing event types, idempotency, CANCELLATION versus EXPIRATION versus RENEWAL |
 | [`security`](revenuecat/security/) | Trusted Entitlements verification, server as the authority, API key hygiene, anonymous identity |
 | [`error-handling`](revenuecat/error-handling/) | Handle `PurchasesError`, the `PurchasesErrorCode` enum, the `userCancelled` flag, and the right UI per code |
 | [`alternative-billing`](revenuecat/alternative-billing/) | Scope alternative billing work with RevenueCat 10.x: what the SDK abstracts and what needs direct integration |

@@ -52,11 +52,14 @@ Record these facts:
 | Fact | Why it matters |
 |---|---|
 | Current PBL version | Drives migration steps (PBL 8 and 9 require `PendingPurchasesParams`) |
-| Context passed to builder | Activity contexts leak; prefer `applicationContext` |
-| Whether `enablePendingPurchases` is called | Missing call throws `IllegalStateException` on `build()` |
+| Context passed to builder | Any context works; BillingClient uses its application context |
+| Whether `enablePendingPurchases` is called | Missing call throws `IllegalArgumentException` on `build()` |
 | Whether auto reconnection is enabled | Absent means you own retry logic |
 | Where `BillingClient` is instantiated | ViewModel, singleton, or Application scoped |
 | Whether KTX is on the classpath | Decides callback vs coroutine style |
+| compileSdk | PBL 9 needs 35+ (androidx.core 1.15.0) |
+| minSdk | PBL 8.1+ needs 23+ |
+| Kotlin version | billing-ktx 9.x needs Kotlin 2.2+; on older Kotlin use plain `billing` |
 
 If you find multiple `BillingClient` instances in one process, flag it. One instance per process is the rule.
 
@@ -85,27 +88,27 @@ In the module `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation("com.android.billingclient:billing-ktx:9.0.0")
+    implementation("com.android.billingclient:billing-ktx:9.1.0")
 }
 ```
 
-The `billing-ktx` artifact pulls in the base library plus coroutine extensions. Drop `-ktx` if you do not want KTX.
+The `billing-ktx` artifact pulls in the base library plus coroutine extensions. Drop `-ktx` if you do not want KTX. PBL 9.x requires compileSdk 35+ and minSdk 23+; `billing-ktx` 9.x also requires Kotlin 2.2+.
 
 ### Step 2 Build the BillingClient
 
-Use `applicationContext` to avoid activity leaks:
+Pass any context (the library uses its application context):
 
 ```kotlin
 val billingClient = BillingClient.newBuilder(appContext)
     .setListener(purchasesUpdatedListener)
     .enablePendingPurchases(
-        PendingPurchasesParams.newBuilder().build()
+        PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()
     )
     .enableAutoServiceReconnection()
     .build()
 ```
 
-All four calls are required for a working PBL 9 setup. Missing `setListener` throws `IllegalArgumentException`. Missing `enablePendingPurchases` throws `IllegalStateException`.
+`setListener` and `enablePendingPurchases(...enableOneTimeProducts()...)` are required; `build()` throws `IllegalArgumentException` if either is missing. `enableAutoServiceReconnection()` is optional but strongly recommended.
 
 ### Step 3 Wire the PurchasesUpdatedListener
 
@@ -140,20 +143,32 @@ billingClient.startConnection(object : BillingClientStateListener {
 })
 ```
 
-KTX form:
+KTX has no `startConnection` extension. Use the callback form, or wrap it:
 
 ```kotlin
-val result = billingClient.startConnection()
-if (result.responseCode == BillingResponseCode.OK) {
-    onBillingReady()
-}
+suspend fun BillingClient.connect(): BillingResult =
+    suspendCancellableCoroutine { cont ->
+        startConnection(object : BillingClientStateListener {
+            override fun onBillingSetupFinished(result: BillingResult) {
+                if (cont.isActive) cont.resume(result)
+            }
+            override fun onBillingServiceDisconnected() {
+                // Resume so the caller never hangs if setup is interrupted
+                if (cont.isActive) cont.resume(
+                    BillingResult.newBuilder()
+                        .setResponseCode(BillingResponseCode.SERVICE_DISCONNECTED)
+                        .build()
+                )
+            }
+        })
+    }
 ```
 
 Do not call billing methods before `onBillingSetupFinished` fires with `OK`. Queue pending work and flush on each successful connect.
 
 ### Step 5 Query product details
 
-Build the product list, mix `INAPP` and `SUBS` in one call, keep each batch at or under 20 products:
+Build one query per product type (`INAPP` and `SUBS` cannot be mixed in one call; the builder throws `IllegalArgumentException`), keeping each batch at or under 20 products:
 
 ```kotlin
 val products = listOf(
@@ -170,9 +185,10 @@ val params = QueryProductDetailsParams.newBuilder()
 Callback form:
 
 ```kotlin
-billingClient.queryProductDetailsAsync(params) { result, list ->
+billingClient.queryProductDetailsAsync(params) { result, queryResult ->
     if (result.responseCode == BillingResponseCode.OK) {
-        displayProducts(list)
+        displayProducts(queryResult.productDetailsList)
+        handleUnfetched(queryResult.unfetchedProductList)
     }
 }
 ```
@@ -181,27 +197,29 @@ KTX form:
 
 ```kotlin
 val result = billingClient.queryProductDetails(params)
-val details = result.productDetailsList
+val details = result.productDetailsList.orEmpty()
 ```
+
+The KTX result has no unfetched list and `productDetailsList` is nullable (use `.orEmpty()`). Use the callback form if you need Step 6.
 
 Do not cache `ProductDetails` across sessions. Prices can change; re query each time you display products.
 
 ### Step 6 Handle UnfetchedProduct results
 
-PBL 8 and 9 return a `QueryProductDetailsResult` that may include `UnfetchedProduct` entries. Branch on the per product response code:
+The callback API's `QueryProductDetailsResult` may include `UnfetchedProduct` entries (the KTX `ProductDetailsResult` does not expose them). Branch on `unfetchedProduct.statusCode`:
 
-| Code | Action |
+| `unfetchedProduct.statusCode` | Action |
 |---|---|
-| `SERVICE_UNAVAILABLE` | Retry with backoff |
-| `SERVICE_TIMEOUT` | Retry with backoff |
-| `ERROR` | Retry, then investigate Play Console |
-| `DEVELOPER_ERROR` | Do not retry; fix product ID or type |
+| `INVALID_PRODUCT_ID_FORMAT` | Do not retry; fix the product ID |
+| `PRODUCT_NOT_FOUND` | Check the ID and product type in Play Console; a just created product may still be propagating, so retry later, not in a loop |
+| `NO_ELIGIBLE_OFFER` | Product exists but has no available base plan (subs) or purchase option (one time) for this user; hide it |
+| `UNKNOWN` | Log and hide |
 
-Cap retries at two or three attempts. Show the products you did fetch and log the rest.
+Retry the whole query with backoff only when the top level `BillingResult` is retriable (`SERVICE_UNAVAILABLE`, `ERROR`, `NETWORK_ERROR`, `SERVICE_DISCONNECTED`). Show the products you did fetch and log the rest.
 
 ### Step 7 Handle disconnection
 
-With `enableAutoServiceReconnection()`, PBL retries for you using exponential backoff. Your job is only to retry the in flight operation that failed with `SERVICE_DISCONNECTED`. If you disabled auto reconnection, implement backoff yourself starting at one second and capping near fifteen seconds.
+With `enableAutoServiceReconnection()`, PBL re-establishes the connection when you make an API call while disconnected. If a call still returns `SERVICE_DISCONNECTED`, the library could not reconnect; retry that operation (simple retry in session, backoff in the background). If you disabled auto reconnection, implement backoff yourself starting at one second and capping near fifteen seconds.
 
 Check `billingClient.isReady` before issuing a call if you need a fast path. Always call `endConnection()` when the owning scope is destroyed.
 
@@ -213,12 +231,12 @@ Before you mark the integration done, confirm each of these:
 |---|---|
 | Dependency present | `./gradlew :app:dependencies` lists `billing-ktx` at the target version |
 | Single client per process | `grep -rn "BillingClient.newBuilder" src/` returns one call site |
-| `enablePendingPurchases` called | Build passes without `IllegalStateException` at first `build()` |
+| `enablePendingPurchases` called | Build passes without `IllegalArgumentException` at first `build()` |
 | Listener fires on purchase | Run a test purchase on the internal track; confirm `OK` branch hit |
 | Connection ready before calls | Log `onBillingSetupFinished` and confirm it precedes queries |
 | Product query returns details | Log `productDetailsList.size` for a known batch |
-| Unfetched handling works | Query a deliberately wrong product ID and confirm you do not retry `DEVELOPER_ERROR` |
-| Disconnect recovery | Toggle airplane mode; confirm auto reconnect and that queued work runs |
+| Unfetched handling works | Query a deliberately wrong product ID with the callback API and confirm it appears in `unfetchedProductList` with `PRODUCT_NOT_FOUND` (or `INVALID_PRODUCT_ID_FORMAT`) and is not retried |
+| Disconnect recovery | Force stop the Play Store app while connected (`adb shell am force-stop com.android.vending`), confirm `onBillingServiceDisconnected()` fires, then make a billing call and confirm it succeeds without a manual `startConnection()`. Test `NETWORK_ERROR` separately in airplane mode |
 | `endConnection()` on teardown | Log it in the owning scope's destroy path |
 
 If any row fails, return to Phase 2 and revise the plan. Do not paper over a failing check.

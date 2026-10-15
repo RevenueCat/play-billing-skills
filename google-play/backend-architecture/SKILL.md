@@ -16,7 +16,7 @@ metadata:
 
 # Backend Architecture for Play Billing
 
-The client is not trustworthy. Signatures can be forged, APKs can be modified, and local purchase data can be faked. Your backend must treat the purchase token as an opaque value to verify with Google. This skill walks you through the verification pipeline, from receiving a token to persisting entitlement state.
+The client is not trustworthy. Client side signature checks can be patched out, APKs can be modified, and local purchase data can be faked or replayed. Your backend must treat the purchase token as an opaque value to verify with Google. This skill walks you through the verification pipeline, from receiving a token to persisting entitlement state.
 
 ## Phase 1: Scope
 
@@ -25,8 +25,8 @@ Confirm the following before you write code.
 - You know which product types you sell (subscriptions, consumables, non consumables). The API endpoint differs per type.
 - You have a user identity model. Each purchase token must map to one user account on your server.
 - You have (or can add) a database for purchase records. The schema uses `purchaseToken` as the primary key.
-- You have a plan for acknowledgement within 3 days. Unacknowledged purchases auto refund.
-- You have a Google Play Console account and can access **Setup > API access**.
+- You have a plan for acknowledgement within 3 days (prepaid plans shorter than one week: within half the plan duration). Unacknowledged purchases auto refund.
+- You have a Google Play Console account and can manage **Users and permissions**.
 
 If any of these are missing, stop and resolve before continuing.
 
@@ -36,11 +36,11 @@ If any of these are missing, stop and resolve before continuing.
 
 Do these steps once per project.
 
-1. In Play Console, open **Setup > API access** and link a Google Cloud project.
+1. In Google Cloud Console, create or pick a project (linking it to Play Console is no longer required).
 2. In Cloud Console, enable the **Google Play Android Developer API**.
 3. Create a service account (for example `play-billing-backend`). No Cloud IAM roles are required.
 4. Generate a JSON key from the service account and store it as a secret. Never commit it.
-5. Back in Play Console, grant the service account **Financial data** and **Manage orders** permissions on your app.
+5. Back in Play Console, open **Users and permissions**, invite the service account email, and grant it **View financial data, orders, and cancellation survey responses** and **Manage orders and subscriptions** on your app.
 
 For containerized deployments on Google Cloud, prefer Workload Identity Federation over JSON key files. `GoogleCredentials.getApplicationDefault()` picks up the attached service account automatically.
 
@@ -50,7 +50,7 @@ Every purchase follows the same pipeline. Plan each step in code before wiring t
 
 1. Receive purchase token from client.
 2. Call Google Play Developer API to fetch purchase state.
-3. Validate response fields (product ID, package name).
+3. Validate response fields (`lineItems[].productId` or `productId` against the claimed product). The package is bound by the `packageName` in the request path, so a token from another app is rejected by the API.
 4. Check purchase state is active or purchased.
 5. Check the token is not already processed (idempotency).
 6. Persist record and grant entitlement.
@@ -96,7 +96,7 @@ fun verify(@RequestBody req: VerifyRequest): VerifyResponse {
     val sub = publisher.purchases().subscriptionsv2()
         .get(packageName, req.purchaseToken).execute()
     validateOrThrow(sub, req.productId)
-    requireActive(sub.subscriptionState)
+    requireEntitled(sub)
     return processPurchase(req.userId, req.purchaseToken, sub)
 }
 ```
@@ -114,14 +114,14 @@ Fields to read from the response:
 
 | Field | Purpose |
 | --- | --- |
-| `subscriptionState` | Active, canceled, in grace period, on hold, paused, expired, or pending. |
+| `subscriptionState` | Active, canceled, in grace period, on hold, paused, expired, pending, or pending purchase canceled. |
 | `lineItems[].productId` | Product sold. Must match what the client claimed. |
 | `lineItems[].expiryTime` | Current period end. |
 | `linkedPurchaseToken` | Previous token in upgrade or downgrade chain. |
 | `acknowledgementState` | Whether you have acknowledged yet. |
 | `externalAccountIdentifiers` | Obfuscated account and profile IDs from the purchase flow. |
 
-Grant the entitlement only when `subscriptionState == SUBSCRIPTION_STATE_ACTIVE`.
+Grant (or keep) the entitlement when `subscriptionState` is `SUBSCRIPTION_STATE_ACTIVE` or `SUBSCRIPTION_STATE_IN_GRACE_PERIOD`, or is `SUBSCRIPTION_STATE_CANCELED` while `lineItems[].expiryTime` is still in the future (`requireEntitled(sub)` in 3.2 implements this rule). Do not grant on `SUBSCRIPTION_STATE_PENDING`, `SUBSCRIPTION_STATE_ON_HOLD`, `SUBSCRIPTION_STATE_PAUSED`, `SUBSCRIPTION_STATE_EXPIRED`, or `SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED`.
 
 ### 3.4 Call the Developer API for one time products
 
@@ -167,9 +167,9 @@ fun processPurchase(userId: String, token: String, sub: SubscriptionPurchaseV2) 
 
 Deactivating the linked token prevents two active entitlements after an upgrade or downgrade.
 
-### 3.6 Acknowledge within 3 days
+### 3.6 Acknowledge within 3 days (half the plan duration for short prepaid plans)
 
-Acknowledge from the backend after the entitlement is granted. If acknowledgement fails, retry with backoff.
+Acknowledge from the backend after the entitlement is granted. If acknowledgement fails, retry with backoff. A top up on a prepaid plan is a new token that must also be acknowledged in time, or Google revokes the top up and the remaining subscription and refunds the user.
 
 ```kotlin
 fun acknowledgeSubscription(packageName: String, productId: String, token: String) {
@@ -205,7 +205,7 @@ fun <T> executeWithRetry(maxAttempts: Int = 3, block: () -> T): T {
 
 ### 3.8 Stay inside your quota
 
-The default quota is 200,000 queries per day across `subscriptionsv2.get` and `products.get`. Apply all four practices.
+Quota is per minute and per bucket: by default 3,000 queries per minute for each bucket. `subscriptionsv2.get` counts against the Subscriptions bucket and `products.get` against the One-time Purchases bucket, independently. Apply all four practices.
 
 - Cache verification results for 5 to 15 minutes keyed by token.
 - Use Real Time Developer Notifications through Pub Sub for state changes instead of polling.
@@ -220,9 +220,9 @@ Before you call the backend done, confirm:
 - An upgrade produces a new token whose `linkedPurchaseToken` deactivates the old entitlement.
 - A pending purchase with `purchaseState == 2` is stored but not granted until it transitions to 0.
 - Acknowledgement happens after the grant and within 3 days. Simulate a missed acknowledgement and confirm the auto refund.
-- A resubscription after cancellation is linked to the user through `externalAccountIdentifiers`, not through a token chain, because Google does not always set `linkedPurchaseToken` on resubscribe.
+- A Play Store resubscription after the old subscription expired arrives only as a `SUBSCRIPTION_PURCHASED` RTDN with a new token and no `linkedPurchaseToken`. Map it to the user with `outOfAppPurchaseContext.expiredExternalAccountIdentifiers` or `outOfAppPurchaseContext.expiredPurchaseToken` from `subscriptionsv2.get`, then acknowledge it from the backend within 3 days (optionally passing `externalAccountIds` in the acknowledge body). A resubscription before expiry sets `linkedPurchaseToken`.
 - The service account JSON key is not in git, not in logs, and rotates on a schedule.
-- Load tests do not push your daily quota above 80 percent.
+- Load tests do not push any per minute quota bucket above 80 percent.
 
 ## References
 

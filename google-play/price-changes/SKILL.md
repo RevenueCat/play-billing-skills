@@ -1,6 +1,6 @@
 ---
 name: price-changes
-description: Use this skill when changing subscription prices on Google Play. Covers opt out price decreases versus opt in price increases, the 30 to 37 day notification timeline, the SUBSCRIPTION_PENDING state, and the API calls to manage price changes for existing subscribers.
+description: Use this skill when changing subscription prices on Google Play. Covers price decreases, opt in versus opt out price increases, the 30 to 37 day notification timeline, the OUTSTANDING price change state, and the API calls to manage price changes for existing subscribers.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -11,7 +11,7 @@ metadata:
   - price-change
   - opt-in
   - opt-out
-  - subscription-pending
+  - price-change-state
 ---
 
 # Google Play Price Changes
@@ -49,14 +49,15 @@ Price decreases skip this entirely. They apply automatically with email notifica
 | Amount cap | None. | Per country maximum increase amount. |
 | First time requirement | Can start from the API. | First opt out for the app must start in the Play Console. |
 | Failure mode | N/A. | Silently downgrades to opt in if eligibility fails. |
+| In app notice | Recommended: tell users in app and deep link to the Play subscription screen. | Required: a prominent in app notice at least 30 days before the new price applies (subscription name, current and new price, effective date, how to cancel) on every device type except watches; you certify it in Play Console when you start the increase. |
 
 Pick opt in when you need any region not on the opt out list, when the increase exceeds the regional cap, when you already used your annual opt out for that country, or when you have never done an opt out in this app before.
 
 ### Plan the timeline
 
-For an opt in increase, map backward from the target effective date. Add 37 days to your initiation date. During the 7 day freeze, plan your own in app messaging. Google starts sending emails and push notifications on day 7, but each subscriber gets notified individually 30 days before their own next renewal.
+For an opt in increase, map backward from the target effective date. Add 37 days to your initiation date. During the 7 day freeze, plan your own in app messaging. Google starts sending emails and push notifications on day 7, but each subscriber is notified individually 30 days before their first renewal at the new price (the first renewal on or after day 37).
 
-For an opt out increase, pick 30 or 60 days based on the subscriber's country. There is no freeze.
+For an opt out increase, pick 30 or 60 days based on the subscriber's country. There is no freeze. Ship the required in app notice first; it must be live 30 days before the new price applies.
 
 ### Plan overlapping migrations
 
@@ -66,24 +67,21 @@ If you initiate a second migration before the first resolves, only the latest ap
 
 ### Step 1: Patch the base plan price
 
-Updating the base plan itself changes the sticker price for new purchases only. Existing subscribers are untouched.
+Updating the base plan itself changes the sticker price for new purchases only. Existing subscribers are untouched. `patch` requires the `updateMask` and `regionsVersion` query parameters, so fetch the subscription first, change only the target region's price inside the existing base plan's `regionalConfigs`, and send the whole subscription back.
 
 ```kotlin
-val regionConfig = RegionalBasePlanConfig(
-    regionCode = "US",
-    price = Money(
-        currencyCode = "USD",
-        units = 6,
-        nanos = 990_000_000
-    )
-)
-val updated = subscription.copy(
-    basePlans = listOf(basePlan.copy(
-        regionalConfigs = listOf(regionConfig)
-    ))
-)
+val subscription = androidPublisher.monetization().subscriptions()
+    .get(packageName, productId)
+    .execute()
+
+val basePlan = subscription.basePlans.first { it.basePlanId == basePlanId }
+val regionConfig = basePlan.regionalConfigs.first { it.regionCode == "US" }
+regionConfig.price = Money().setCurrencyCode("USD").setUnits(6L).setNanos(990_000_000)
+
 androidPublisher.monetization().subscriptions()
-    .patch(packageName, productId, updated)
+    .patch(packageName, productId, subscription)
+    .setUpdateMask("basePlans")
+    .setRegionsVersionVersion("2022/02") // required regionsVersion.version query parameter
     .execute()
 ```
 
@@ -94,16 +92,13 @@ Propagation to new purchases is typically under 4 hours. There is no way to forc
 This is the action that actually moves existing subscribers. Use `monetization.subscriptions.basePlans.migratePrices` with a `RegionalPriceMigrationConfig` per region.
 
 ```kotlin
-val migration = RegionalPriceMigrationConfig(
-    regionCode = "US",
-    oldestAllowedPriceVersionTime = "2025-01-01T00:00:00Z",
-    priceIncreaseType =
-        PriceIncreaseType.PRICE_INCREASE_TYPE_OPT_IN
-)
-val request = MigratePricesRequest(
-    regionalPriceMigrations = listOf(migration),
-    regionsVersion = RegionsVersion(version = "2022/02")
-)
+val migration = RegionalPriceMigrationConfig()
+    .setRegionCode("US")
+    .setOldestAllowedPriceVersionTime("2025-01-01T00:00:00Z")
+    .setPriceIncreaseType("PRICE_INCREASE_TYPE_OPT_IN")
+val request = MigrateBasePlanPricesRequest()
+    .setRegionalPriceMigrations(listOf(migration))
+    .setRegionsVersion(RegionsVersion().setVersion("2022/02"))
 androidPublisher.monetization().subscriptions().basePlans()
     .migratePrices(packageName, productId, basePlanId, request)
     .execute()
@@ -115,13 +110,13 @@ If you request `PRICE_INCREASE_TYPE_OPT_OUT` and the migration fails any eligibi
 
 ### Step 3: Handle SUBSCRIPTION_PRICE_CHANGE_UPDATED RTDN (type 19)
 
-Every price change event fires this RTDN. Always fetch the current state with `purchases.subscriptionsv2.get` and inspect `priceChangeDetails` on the line item. Do not assume which migration the notification refers to.
+Every price change event fires this RTDN. Always fetch the current state with `purchases.subscriptionsv2.get` and inspect `autoRenewingPlan.priceChangeDetails` on each line item. Do not assume which migration the notification refers to.
 
 ```kotlin
 fun handlePriceChangeRtdn(purchaseToken: String) {
     val sub = playApi.getSubscriptionV2(packageName, purchaseToken)
     for (item in sub.lineItems) {
-        val pc = item.priceChangeDetails ?: continue
+        val pc = item.autoRenewingPlan?.priceChangeDetails ?: continue
         when (pc.priceChangeState) {
             "OUTSTANDING" -> recordPendingOptIn(pc)
             "CONFIRMED"   -> recordAcceptedOrAutomatic(pc)
@@ -143,7 +138,7 @@ State meanings:
 
 The `priceChangeMode` field distinguishes `PRICE_DECREASE`, `PRICE_INCREASE` (opt in), and `OPT_OUT_PRICE_INCREASE`. The `expectedNewPriceChargeTime` field tells you when the user will first be charged at the new price and is only populated before the change applies.
 
-### Step 4: Watch for SUBSCRIPTION_PENDING and auto cancel
+### Step 4: Watch for OUTSTANDING opt in increases and auto cancel
 
 For opt in increases, a user who neither accepts nor cancels gets auto canceled by Google at their renewal. The user keeps access through the end of the current period, then the subscription expires. Treat `priceChangeState == OUTSTANDING` past the effective date as a churn risk and surface an in app prompt with a deep link to the Play Store subscription management screen.
 

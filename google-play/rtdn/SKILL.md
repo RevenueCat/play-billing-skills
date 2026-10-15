@@ -1,6 +1,6 @@
 ---
 name: rtdn
-description: Use this skill when setting up Real Time Developer Notifications (RTDN) for Google Play. Covers the full pipeline from Cloud Pub/Sub configuration through message parsing and processing all 22 subscription notification types (renewals, cancellations, revocations, account holds, etc.).
+description: Use this skill when setting up Real Time Developer Notifications (RTDN) for Google Play. Covers the full pipeline from Cloud Pub/Sub configuration through message parsing and processing all 18 subscription notification types (codes 1 to 13, 17 to 20, and 22).
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -22,8 +22,8 @@ RTDN pushes subscription and purchase state changes from Google Play to your bac
 
 Pin down the following before you write code:
 
-- **What triggers a notification.** Google Play publishes a message to a Cloud Pub/Sub topic you own every time a subscription or one time product changes state (renewal, cancellation, refund, hold, pause, revocation, price change confirmation, etc.).
-- **What the notification contains.** A `DeveloperNotification` JSON object with `packageName`, `eventTimeMillis`, and exactly one of `subscriptionNotification`, `oneTimeProductNotification`, `voidedPurchaseNotification`, or `testNotification`. It carries a `purchaseToken` and a type code, not the full purchase state.
+- **What triggers a notification.** Google Play publishes a message to a Cloud Pub/Sub topic you own every time a subscription changes state, a purchase is voided, or (if enabled in the RTDN settings) a one time product is purchased or a pending one is canceled.
+- **What the notification contains.** A `DeveloperNotification` JSON object with `packageName`, `eventTimeMillis`, and exactly one of `subscriptionNotification`, `oneTimeProductNotification`, `voidedPurchaseNotification`, `pendingRefundReviewNotification`, or `testNotification`. Subscription, one time product, and voided purchase notifications carry a `purchaseToken` (a pending refund review carries `orderId` and `pendingRefundToken` instead), not the full purchase state.
 - **Who owns what.** You own the Pub/Sub topic and subscription in your own Google Cloud project. Google Play only has publish rights.
 - **Delivery semantics.** Cloud Pub/Sub guarantees at least once delivery and does not guarantee ordering. Duplicates and out of order messages are normal.
 - **The golden rule.** RTDNs are signals, not sources of truth. For every notification, call `purchases.subscriptionsv2.get` or `purchases.products.get` and update entitlements from the API response, not the notification type.
@@ -55,7 +55,7 @@ Your webhook must return `2xx` within the ack deadline to acknowledge the messag
 
 - Ack as soon as you have durably captured the message (message ID plus payload). Do the API call and database updates inside the same request only if they fit well inside the ack deadline. Otherwise ack fast and process asynchronously from a queue you own.
 - Never ack before you have persisted enough to replay the work. A lost message after ack means a missed state change.
-- A `5xx` response forces Pub/Sub to resend, which you want for transient failures. A `4xx` response signals a permanent error and may drop the message (or send it to a dead letter topic if configured). Pick the status code deliberately.
+- Any status other than 102, 200, 201, 202, or 204 (4xx included) is a negative acknowledgement, and Pub/Sub redelivers the message. Return `5xx` for transient failures. For a message you can never process, save it to your own error store and return `200`, or configure a dead letter topic with a maximum delivery attempts limit.
 
 ### Idempotency plan
 
@@ -104,7 +104,7 @@ For pull, omit `--push-endpoint` and run a subscriber loop in your backend.
 
 ### Step 4: Enable RTDN in Play Console
 
-In the Play Console, open Monetization setup, find Real time developer notifications, enter `projects/YOUR_PROJECT_ID/topics/play-billing-notifications`, click Send test notification, and save. A push subscriber should receive the test within seconds.
+In the Play Console, open Monetization setup, find Real time developer notifications, check **Enable real-time notifications**, enter `projects/YOUR_PROJECT_ID/topics/play-billing-notifications`, click **Send Test Message**, choose **Get all notifications for subscriptions and one-time products** under notification types (the other option omits one time product events), and click **Save changes**. A push subscriber should receive the test within seconds.
 
 ### Step 5: Write the webhook endpoint
 
@@ -142,6 +142,7 @@ data class DeveloperNotification(
     val subscriptionNotification: SubscriptionNotification? = null,
     val oneTimeProductNotification: OneTimeProductNotification? = null,
     val voidedPurchaseNotification: VoidedPurchaseNotification? = null,
+    val pendingRefundReviewNotification: PendingRefundReviewNotification? = null,
     val testNotification: TestNotification? = null
 )
 ```
@@ -159,11 +160,17 @@ fun route(n: DeveloperNotification) {
             handleOneTime(n.oneTimeProductNotification)
         n.voidedPurchaseNotification != null ->
             handleVoided(n.voidedPurchaseNotification)
+        n.pendingRefundReviewNotification != null ->
+            handleRefundReview(n.pendingRefundReviewNotification)
         n.testNotification != null ->
             log("RTDN test received")
+        else ->
+            log("Unknown RTDN shape: $n")
     }
 }
 ```
+
+Call `orders.reviewrefund` (POST `applications/{packageName}/orders/{orderId}:reviewrefund`) with `pendingRefundToken`, `refundPreference`, and `sampleContentProvided` within 24 hours of a `pendingRefundReviewNotification`.
 
 ### Step 7: Deduplicate before processing
 
@@ -190,32 +197,33 @@ suspend fun handleSubscription(s: SubscriptionNotification) {
 }
 ```
 
-Apply the same pattern to one time products (`purchases.products.get`) and voided purchases (revoke the entitlement keyed on the purchase token).
+Apply the same pattern to one time products (`purchases.products.get`) and voided purchases (revoke the entitlement keyed on the purchase token; for `refundType` 2 claw back only the refunded quantity, see below).
 
 ### Notification type reference
 
-Chapter 10 of the handbook documents the 14 subscription types, 2 one time product types, voided purchase, and test notification. The full catalog of 22 subscription notification types (including newer types such as pending plan changes and winback acceptances) is maintained in Appendix A of the handbook. See the [RTDN chapter on revenuecat.com](https://www.revenuecat.com/guides/google-play-billing/real-time-developer-notifications-rtdn) for in depth coverage of each type; see the [rtdn-reference](../rtdn-reference/) skill or the appendix linked from it for the complete list.
+Chapter 10 of the handbook documents the 14 subscription types, 2 one time product types, voided purchase, and test notification. The 18 subscription notification types (codes 1 to 13, 17 to 20, and 22; the newer ones are SUBSCRIPTION_ITEMS_CHANGED, SUBSCRIPTION_CANCELLATION_SCHEDULED, SUBSCRIPTION_PRICE_CHANGE_UPDATED, SUBSCRIPTION_PENDING_PURCHASE_CANCELED, and SUBSCRIPTION_PRICE_STEP_UP_CONSENT_UPDATED) are listed in Appendix A of the handbook. See the [RTDN chapter on revenuecat.com](https://www.revenuecat.com/guides/google-play-billing/real-time-developer-notifications-rtdn) for in depth coverage of each type; see the [rtdn-reference](../rtdn-reference/) skill or the appendix linked from it for the complete list.
 
 Key subscription types you must handle correctly:
 
 | Type | Code | Action |
 |------|------|--------|
 | SUBSCRIPTION_RECOVERED | 1 | Restore access; payment recovered from hold |
-| SUBSCRIPTION_RENEWED | 2 | Extend expiry to new `expiryTimeMillis` |
-| SUBSCRIPTION_CANCELED | 3 | Keep access until `expiryTimeMillis`; do not revoke now |
+| SUBSCRIPTION_RENEWED | 2 | Extend expiry to new `lineItems[].expiryTime` |
+| SUBSCRIPTION_CANCELED | 3 | Keep access until `lineItems[].expiryTime`; do not revoke now |
 | SUBSCRIPTION_PURCHASED | 4 | Server side safety net; verify the purchase |
 | SUBSCRIPTION_ON_HOLD | 5 | Revoke access; keep the subscription record |
 | SUBSCRIPTION_IN_GRACE_PERIOD | 6 | Keep access; surface a payment update prompt |
 | SUBSCRIPTION_RESTARTED | 7 | User resubscribed before expiry; confirm auto renewing |
-| SUBSCRIPTION_PRICE_CHANGE_CONFIRMED | 8 | Record new price for next renewal |
+| SUBSCRIPTION_PRICE_CHANGE_CONFIRMED | 8 | Deprecated; handle code 19 instead |
 | SUBSCRIPTION_DEFERRED | 9 | Fetch new expiry time and extend access |
 | SUBSCRIPTION_PAUSED | 10 | Revoke access until resume |
 | SUBSCRIPTION_PAUSE_SCHEDULE_CHANGED | 11 | Sync pause schedule with API state |
 | SUBSCRIPTION_REVOKED | 12 | Revoke access immediately |
 | SUBSCRIPTION_EXPIRED | 13 | Terminal; revoke if not already |
-| SUBSCRIPTION_PENDING_PURCHASE_CANCELED | 14 | Clean up pending record; no revocation needed |
+| SUBSCRIPTION_PRICE_CHANGE_UPDATED | 19 | Re-read `lineItems[].autoRenewingPlan.priceChangeDetails` |
+| SUBSCRIPTION_PENDING_PURCHASE_CANCELED | 20 | Clean up the pending record. If it was a pending upgrade, downgrade, or top up, the old subscription stays active |
 
-One time products: `ONE_TIME_PRODUCT_PURCHASED (1)` and `ONE_TIME_PRODUCT_CANCELED (2)`. Voided purchases: always revoke and record for reconciliation; `productType` marks subscription (1) vs one time (2) and `refundType` marks full (1) vs quantity based (2).
+One time products: `ONE_TIME_PRODUCT_PURCHASED (1)` and `ONE_TIME_PRODUCT_CANCELED (2)`. Voided purchases: revoke and record for reconciliation; `productType` marks subscription (1) vs one time (2). For `refundType` 2 (quantity based partial refund) claw back only the refunded quantity (`refundableQuantity` from `purchases.productsv2` holds what remains).
 
 ## Phase 4: Verify
 

@@ -17,7 +17,7 @@ metadata:
 
 # Error Handling and Retry Strategies
 
-Every Play Billing Library call can fail. Network connections drop, Google Play Services restarts, users cancel purchases, and payment methods get declined. This skill gives you a phased path from reading a `BillingResult` to shipping a retry layer that recovers gracefully without hammering Google's servers.
+Every Play Billing Library call can fail. Network connections drop, the Play Store app updates or restarts, users cancel purchases, and payment methods get declined. This skill gives you a phased path from reading a `BillingResult` to shipping a retry layer that recovers gracefully without hammering Google's servers.
 
 ## Phase 1: Read BillingResult correctly
 
@@ -36,7 +36,7 @@ when (billingResult.responseCode) {
 }
 ```
 
-PBL 8.0 added sub response codes returned from `BillingResult.getSubResponseCode()`. Two are worth branching on:
+PBL 8.0 added sub response codes, read in `PurchasesUpdatedListener` with `BillingResult.getOnPurchasesUpdatedSubResponseCode()` (Kotlin: `billingResult.onPurchasesUpdatedSubResponseCode`). Two are worth branching on:
 
 - `PAYMENT_DECLINED_DUE_TO_INSUFFICIENT_FUNDS` arrives under a top level `ERROR` and lets you suggest a different payment method instead of a generic failure screen.
 - `USER_INELIGIBLE` tells you the user does not qualify for the offer, so you can show alternatives they do qualify for.
@@ -52,23 +52,24 @@ Before you write retry code, place every code in one of four buckets. Retriable 
 | OK | 0 | Success | Proceed |
 | USER_CANCELED | 1 | Ignore | Return silently to previous screen |
 | SERVICE_UNAVAILABLE | 2 | Retriable | Exponential backoff |
-| BILLING_UNAVAILABLE | 3 | User driven | Prompt user to sign in or update Play Store |
+| BILLING_UNAVAILABLE | 3 | User driven | Show a generic unavailable message with a Try again button; never auto retry |
 | ITEM_UNAVAILABLE | 4 | Cache sync | Refresh product details |
 | DEVELOPER_ERROR | 5 | Terminal | Fix code, log debugMessage |
 | ERROR | 6 | Retriable | Exponential backoff |
 | ITEM_ALREADY_OWNED | 7 | Cache sync | Refresh purchases, grant access |
 | ITEM_NOT_OWNED | 8 | Cache sync | Refresh purchases |
 | NETWORK_ERROR | 12 | Retriable | Simple retry with short delay |
-| SERVICE_DISCONNECTED | -1 | Reconnect | Call startConnection, then retry |
-| SERVICE_TIMEOUT | -3 | Retriable | Simple retry with short delay |
+| SERVICE_DISCONNECTED | -1 | Reconnect | With `enableAutoServiceReconnection()`: retry the call (simple in session, backoff in background). Without it: call startConnection, then retry |
+| SERVICE_TIMEOUT | -3 | Retriable (deprecated, not returned since PBL 6) | Treat as SERVICE_UNAVAILABLE |
 | FEATURE_NOT_SUPPORTED | -2 | Terminal | Hide feature in UI |
 
 A few classification notes:
 
-- `BILLING_UNAVAILABLE` requires user action (sign in, update Play Store, switch account). Never auto retry. Offer a "try again" button after the user fixes the root cause. **As of PBL 9** (with androidx.core 1.9+), a Play Store blocked by the system (OEM kids mode, parental controls, managed enterprise device) also reports `BILLING_UNAVAILABLE` with a "Play Store is blocked" `debugMessage`, where PBL 8 returned a generic `ERROR`. You may branch on that debug message to show a blocked store fallback, but treat the message as a hint only and never localize or parse it for logic.
+- `BILLING_UNAVAILABLE` means billing is unavailable for this user or device (outdated Play Store, unsupported country, purchases disabled by an admin, payment method cannot be charged). Never auto retry; offer a "try again" button. **As of PBL 9** (with androidx.core 1.9+), a Play Store blocked by the system (for example an OEM customized kids mode) reports `BILLING_UNAVAILABLE` instead of `ERROR`, with a "Play Store is blocked" `debugMessage`. Handle it like any other `BILLING_UNAVAILABLE`; log the debug message but do not branch on its text.
 - `ITEM_ALREADY_OWNED` often means a purchase succeeded but your app crashed before processing it. Refresh purchases and grant access instead of showing an error.
 - `DEVELOPER_ERROR` should never reach production. If you see it in logs, fix the call site (invalid product ID, wrong product type, calling before connection is ready).
 - `FEATURE_NOT_SUPPORTED` is answered at startup by calling `isFeatureSupported` once and hiding unsupported features.
+- `SERVICE_DISCONNECTED` (`BillingAction.Reconnect`): enable `enableAutoServiceReconnection()` (PBL 8+) when building the client; with it, `Reconnect` means retry the call, not call `startConnection()` yourself.
 
 Model the classification as a sealed action type so decisions are unit testable without a `BillingClient`:
 
@@ -91,10 +92,10 @@ sealed class BillingAction {
 // PBL 9.x
 fun decideBillingAction(code: Int) = when (code) {
     BillingResponseCode.OK -> BillingAction.Success
-    BillingResponseCode.NETWORK_ERROR,
-    BillingResponseCode.SERVICE_TIMEOUT -> BillingAction.RetrySimple
+    BillingResponseCode.NETWORK_ERROR -> BillingAction.RetrySimple
     BillingResponseCode.SERVICE_UNAVAILABLE,
-    BillingResponseCode.ERROR -> BillingAction.RetryBackoff
+    BillingResponseCode.ERROR,
+    BillingResponseCode.SERVICE_TIMEOUT -> BillingAction.RetryBackoff
     BillingResponseCode.SERVICE_DISCONNECTED -> BillingAction.Reconnect
     BillingResponseCode.ITEM_ALREADY_OWNED,
     BillingResponseCode.ITEM_NOT_OWNED -> BillingAction.RefreshPurchases
@@ -109,7 +110,7 @@ fun decideBillingAction(code: Int) = when (code) {
 
 Retriable codes split into two policies. Network level noise uses a short fixed delay. Server side overload uses exponential backoff with jitter. Add a circuit breaker on top so a failing downstream stops burning user battery and retry budget.
 
-### Simple retry for NETWORK_ERROR and SERVICE_TIMEOUT
+### Simple retry for NETWORK_ERROR
 
 Start at one to two seconds, cap at three attempts, and always check the response code instead of catching exceptions (PBL returns results, it does not throw).
 
@@ -132,7 +133,7 @@ suspend fun retryOnBillingError(
 }
 ```
 
-### Exponential backoff with jitter for SERVICE_UNAVAILABLE and ERROR
+### Exponential backoff with jitter for SERVICE_UNAVAILABLE, ERROR, and SERVICE_TIMEOUT
 
 Double the delay each attempt so overloaded services can recover. Add random jitter so thousands of devices do not retry in lockstep after a regional outage.
 
@@ -159,7 +160,7 @@ suspend fun retryWithBackoff(
 }
 ```
 
-With base two seconds and factor two, the schedule runs 2s, 4s, 8s. Three attempts finish inside roughly six seconds of waiting, which is acceptable for an in flight purchase and gives Google room to breathe.
+With base two seconds and factor two, the waits are 2s then 4s (plus up to 1s jitter each). Three attempts finish inside roughly six seconds of waiting, which is acceptable for an in flight purchase and gives Google room to breathe.
 
 ### Circuit breaker to stop cascading failures
 
@@ -179,7 +180,7 @@ class BillingCircuitBreaker(
     fun recordSuccess() { failures = 0 }
     fun recordFailure() {
         failures++
-        if (failures == threshold) openedAt = System.currentTimeMillis()
+        if (failures >= threshold) openedAt = System.currentTimeMillis()
     }
 }
 ```
@@ -214,7 +215,7 @@ User messaging maps directly to categories:
 
 - Retriable in progress: show a subtle loading indicator, never flash errors between attempts.
 - Retries exhausted: "Something went wrong. Please try again." with a retry button.
-- `BILLING_UNAVAILABLE`: "Google Play is not available. Please check that you're signed in to the Play Store."
+- `BILLING_UNAVAILABLE`: "Purchases aren't available on this device or account right now. Please try again later."
 - Payment declined sub code: "Your payment method was declined. Please update your payment method in Google Play and try again."
 - Never show raw response codes or `debugMessage` text to users.
 

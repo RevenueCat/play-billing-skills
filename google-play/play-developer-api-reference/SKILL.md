@@ -27,7 +27,7 @@ Typical questions this skill answers:
 - Which path consumes or acknowledges a one time product?
 - How do I page through voided purchases?
 - What monetization endpoints manage subscriptions, base plans, and offers?
-- What quota tier applies to my call?
+- Which quota bucket applies to my call?
 
 ## Phase 1: Locate
 
@@ -45,8 +45,9 @@ All endpoint tables, response field schemas, and quota guidance live in the [ful
 | Manage subscription products | Catalog Management: Subscriptions |
 | Manage base plans | Catalog Management: Base Plans |
 | Manage offers | Catalog Management: Offers |
-| Manage one time products (in-app products) | Catalog Management: One Time Products |
-| Understand quota tiers | Rate Limiting |
+| Manage a one time product (the default surface) | Catalog Management: One Time Products (monetization.onetimeproducts) |
+| Manage a legacy one time product never migrated off `inappproducts` | Legacy One Time Products (inappproducts) |
+| Understand quota buckets | Rate Limiting |
 
 ## Phase 2: Reference
 
@@ -62,17 +63,19 @@ https://androidpublisher.googleapis.com/androidpublisher/v3/
 |----------|--------|------|-------------|
 | `purchases.subscriptionsv2.get` | GET | `applications/{packageName}/purchases/subscriptionsv2/tokens/{token}` | Get the current state of a subscription. This is the source of truth. |
 | `purchases.subscriptionsv2.revoke` | POST | `applications/{packageName}/purchases/subscriptionsv2/tokens/{token}:revoke` | Revoke a subscription immediately. User loses access right away. |
-| `purchases.subscriptionsv2.defer` | POST | `applications/{packageName}/purchases/subscriptions/{subscriptionId}/tokens/{token}:defer` | Defer the next billing date (min 1 day, max 1 year extension). |
-| `purchases.subscriptionsv2.cancel` | POST | `applications/{packageName}/purchases/subscriptions/{subscriptionId}/tokens/{token}:cancel` | Cancel a subscription. User retains access until `expiryTime`. |
-| `purchases.subscriptions.get` | GET | `applications/{packageName}/purchases/subscriptions/{subscriptionId}/tokens/{token}` | Legacy endpoint. Use `subscriptionsv2.get` instead. |
+| `purchases.subscriptionsv2.defer` | POST | `applications/{packageName}/purchases/subscriptionsv2/tokens/{token}:defer` | Defer the next billing date (min 1 day, max 1 year extension). |
+| `purchases.subscriptionsv2.cancel` | POST | `applications/{packageName}/purchases/subscriptionsv2/tokens/{token}:cancel` | Cancel a subscription. User retains access until `expiryTime`. |
 | `purchases.subscriptions.acknowledge` | POST | `applications/{packageName}/purchases/subscriptions/{subscriptionId}/tokens/{token}:acknowledge` | Acknowledge a subscription purchase. |
+| `purchases.subscriptions.cancel` / `purchases.subscriptions.defer` | POST | v1 paths with `{subscriptionId}` | Deprecated. Use the `subscriptionsv2` methods above. (`purchases.subscriptions.get` has been removed.) |
+
+Request bodies: `cancel` `{"cancellationContext": {"cancellationType": "USER_REQUESTED_STOP_RENEWALS" | "DEVELOPER_REQUESTED_STOP_PAYMENTS"}}`; `defer` `{"deferralContext": {"etag": "<etag from subscriptionsv2.get>", "deferDuration": "604800s", "validateOnly": false}}` (response `itemExpiryTimeDetails[]`); `revoke` `{"revocationContext": {"fullRefund": {}}}` or `proratedRefund: {}` or `itemBasedRefund: {"productId": "..."}`.
 
 #### SubscriptionPurchaseV2 Response (Key Fields)
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `kind` | string | Always `"androidpublisher#subscriptionPurchaseV2"` |
-| `subscriptionState` | string | Current state: `ACTIVE`, `CANCELED`, `IN_GRACE_PERIOD`, `ON_HOLD`, `PAUSED`, `EXPIRED`, `PENDING` |
+| `subscriptionState` | string (enum) | `SUBSCRIPTION_STATE_PENDING`, `SUBSCRIPTION_STATE_ACTIVE`, `SUBSCRIPTION_STATE_PAUSED`, `SUBSCRIPTION_STATE_IN_GRACE_PERIOD`, `SUBSCRIPTION_STATE_ON_HOLD`, `SUBSCRIPTION_STATE_CANCELED`, `SUBSCRIPTION_STATE_EXPIRED`, `SUBSCRIPTION_STATE_PENDING_PURCHASE_CANCELED` |
 | `lineItems[]` | array | One entry per base plan/offer in the subscription |
 | `lineItems[].productId` | string | The subscription product ID |
 | `lineItems[].expiryTime` | timestamp | When this line item expires |
@@ -82,7 +85,7 @@ https://androidpublisher.googleapis.com/androidpublisher/v3/
 | `linkedPurchaseToken` | string | If this purchase replaces another, the token of the replaced purchase. |
 | `startTime` | timestamp | When the subscription was first purchased. |
 | `regionCode` | string | ISO 3166-1 alpha-2 country code of the user. |
-| `canceledStateContext` | object | Why the subscription was canceled. Contains `userInitiatedCancellation`, `systemInitiatedCancellation`, or `developerInitiatedCancellation`. |
+| `canceledStateContext` | object | Why the subscription was canceled. Contains one of `userInitiatedCancellation`, `systemInitiatedCancellation`, `developerInitiatedCancellation`, or `replacementCancellation`. Present for CANCELED and EXPIRED states. |
 | `acknowledgementState` | string | `ACKNOWLEDGEMENT_STATE_PENDING` or `ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED` |
 | `externalAccountIdentifiers` | object | Contains `obfuscatedExternalAccountId` and `obfuscatedExternalProfileId`. |
 | `pausedStateContext` | object | Present when paused. Contains `autoResumeTime`. |
@@ -117,7 +120,10 @@ https://androidpublisher.googleapis.com/androidpublisher/v3/
 
 | Endpoint | Method | Path | Description |
 |----------|--------|------|-------------|
-| `orders.refund` | POST | `applications/{packageName}/orders/{orderId}:refund` | Issue a full refund. Available within 3 years of purchase. |
+| `orders.get` | GET | `applications/{packageName}/orders/{orderId}` | Get order details for a single order. |
+| `orders.batchget` | GET | `applications/{packageName}/orders:batchGet` | Get order details for a list of orders. |
+| `orders.refund` | POST | `applications/{packageName}/orders/{orderId}:refund` | Refund an order. Add `?revoke=true` to also end access (and future renewals). Orders older than 3 years cannot be refunded. |
+| `orders.reviewrefund` | POST | `applications/{packageName}/orders/{orderId}:reviewrefund` | Answer a `pendingRefundReviewNotification` (chargeback) within 24 hours. Body: `pendingRefundToken`, `refundPreference` (`APPROVE` / `DECLINE` / `NEUTRAL`), `sampleContentProvided`. |
 
 ### Voided Purchases
 
@@ -129,11 +135,12 @@ https://androidpublisher.googleapis.com/androidpublisher/v3/
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `startTime` | long | Milliseconds since epoch. Only return purchases voided after this time. |
+| `startTime` | long | Milliseconds since epoch. Only return purchases voided after this time. Cannot be older than 30 days (default: now minus 30 days); ignored when `token` is set. |
 | `endTime` | long | Milliseconds since epoch. Only return purchases voided before this time. |
-| `startIndex` | integer | Pagination offset. |
+| `startIndex` | integer | Pagination offset. Only when indexed paging is enabled; prefer `token`. |
+| `token` | string | Continuation token from `tokenPagination.nextPageToken` of the previous page. |
 | `maxResults` | integer | Maximum results per page (default 1000, max 1000). |
-| `type` | integer | `0` = Both, `1` = Subscriptions only, `2` = One time products only |
+| `type` | integer | `0` = voided one time purchases only (default), `1` = one time purchases and subscriptions. With `1`, key records by `orderId` because subscription renewals share a purchase token. |
 | `includeQuantityBasedPartialRefund` | boolean | Include partial quantity based refunds. |
 
 ### Catalog Management: Subscriptions
@@ -170,11 +177,30 @@ https://androidpublisher.googleapis.com/androidpublisher/v3/
 | `monetization.subscriptions.basePlans.offers.delete` | DELETE | `...offers/{offerId}` | Delete a draft offer. |
 | `monetization.subscriptions.basePlans.offers.activate` | POST | `...offers/{offerId}:activate` | Activate an offer. |
 | `monetization.subscriptions.basePlans.offers.deactivate` | POST | `...offers/{offerId}:deactivate` | Deactivate an offer. |
-| `monetization.subscriptions.basePlans.offers.batchGet` | GET | `...offers:batchGet` | Get multiple offers. |
+| `monetization.subscriptions.basePlans.offers.batchGet` | POST | `...offers:batchGet` | Get multiple offers. |
 | `monetization.subscriptions.basePlans.offers.batchUpdate` | POST | `...offers:batchUpdate` | Update multiple offers. |
 | `monetization.subscriptions.basePlans.offers.batchUpdateStates` | POST | `...offers:batchUpdateStates` | Batch activate/deactivate offers. |
 
-### Catalog Management: One Time Products (In-App Products)
+### Catalog Management: One Time Products (monetization.onetimeproducts)
+
+The default surface for one time products: covers products created here and catalogs migrated from `inappproducts`. Once a product is migrated, it can no longer be reached through `inappproducts`.
+
+| Endpoint | Method | Path | Description |
+|----------|--------|------|-------------|
+| `monetization.onetimeproducts.get` | GET | `applications/{packageName}/oneTimeProducts/{productId}` | Get product details. |
+| `monetization.onetimeproducts.list` | GET | `applications/{packageName}/oneTimeProducts` | List all one time products. |
+| `monetization.onetimeproducts.patch` | PATCH | `applications/{packageName}/onetimeproducts/{productId}` | Create (with `allowMissing=true`) or update a product. Requires `updateMask` and `regionsVersion.version`; there is no `create` method. |
+| `monetization.onetimeproducts.batchGet` | GET | `applications/{packageName}/oneTimeProducts:batchGet` | Get multiple products. |
+| `monetization.onetimeproducts.batchUpdate` | POST | `applications/{packageName}/oneTimeProducts:batchUpdate` | Create or update up to 100 products. |
+| `monetization.onetimeproducts.delete` | DELETE | `applications/{packageName}/oneTimeProducts/{productId}` | Delete a product. |
+| `monetization.onetimeproducts.batchDelete` | POST | `applications/{packageName}/oneTimeProducts:batchDelete` | Delete multiple products. |
+| `monetization.onetimeproducts.purchaseOptions.batchUpdateStates` | POST | `applications/{packageName}/oneTimeProducts/{productId}/purchaseOptions:batchUpdateStates` | Activate or deactivate purchase options. A new purchase option starts Draft and is invisible to the Play Billing Library until activated. |
+| `monetization.onetimeproducts.purchaseOptions.offers.activate` / `.deactivate` / `.cancel` | POST | `.../purchaseOptions/{purchaseOptionId}/offers/{offerId}:activate` (or `:deactivate`, `:cancel`) | Change the state of one offer. |
+| `monetization.onetimeproducts.purchaseOptions.offers.batchUpdate` / `.batchUpdateStates` / `.list` | POST / POST / GET | `.../purchaseOptions/{purchaseOptionId}/offers:batchUpdate` (or `:batchUpdateStates`, or no suffix for `list`) | Bulk update, bulk activate or deactivate, or list offers under one purchase option. |
+
+### Legacy One Time Products (inappproducts)
+
+Only for one time products never migrated off the `inappproducts` service. See Catalog Management: One Time Products (monetization.onetimeproducts) above for everything else.
 
 | Endpoint | Method | Path | Description |
 |----------|--------|------|-------------|
@@ -190,13 +216,16 @@ https://androidpublisher.googleapis.com/androidpublisher/v3/
 
 ### Rate Limiting
 
-| Tier | Default Quota | Endpoints |
-|------|---------------|-----------|
-| Read | Higher limits | All `get`, `list`, `batchGet` operations |
-| Write | Lower limits | All `create`, `update`, `patch`, `delete`, `batchUpdate` operations |
-| Sensitive | Most restricted | `refund`, `revoke`, price migration operations |
+| Quota bucket | APIs in the bucket | Default quota |
+|---|---|---|
+| Subscriptions | SubscriptionPurchases and SubscriptionPurchasesV2 calls not listed under Subscription Updates (for example `purchases.subscriptionsv2.get`, `purchases.subscriptions.acknowledge`) | 3,000 queries per minute, independent per bucket |
+| Subscription Updates | `purchases.subscriptionsv2.revoke` and the deprecated v1 `purchases.subscriptions.cancel` / `.defer` (Google's quota page does not yet list `subscriptionsv2.cancel` or `.defer`) | 3,000 queries per minute, independent per bucket |
+| One-time Purchases | `purchases.products.*`, `purchases.productsv2.*` | 3,000 queries per minute, independent per bucket |
+| Orders | `orders.*`, `purchases.voidedpurchases.list` | 3,000 queries per minute, independent per bucket |
+| ExternalTransactions | `externaltransactions.*` | 3,000 queries per minute for the bucket; `createexternaltransaction` and `refundexternaltransaction` also share a 1,200 queries per minute limit (`get` calls do not count) |
+| Publishing, Monetization, and Reply to Reviews | Publishing APIs, `monetization.*`, Permissions APIs, Reply to Reviews APIs | 3,000 queries per minute, independent per bucket |
 
-Quota is measured per project, per minute. When you exceed your quota, the API returns HTTP 429 (Too Many Requests). Implement exponential backoff for quota errors. You can monitor usage in the Google Cloud Console under **APIs & Services > Dashboard > Android Publisher API**.
+There are no Read, Write, or Sensitive query tiers; catalog writes are additionally limited per app per hour by `latencyTolerance` (see catalog-management). Quota is measured per project, per minute, per bucket, and each bucket's quota is independent of the others. When you exceed a bucket's quota, the API returns HTTP 429 (Too Many Requests). Implement exponential backoff for quota errors. You can monitor usage in Google Cloud Console > IAM & Admin > Quotas (service `androidpublisher.googleapis.com`).
 
 ## Phase 3: Auth and Scopes
 
@@ -208,8 +237,8 @@ https://www.googleapis.com/auth/androidpublisher
 
 Guidance for a server side integration:
 
-1. Create a service account in the Google Cloud project linked to your Play Console.
-2. Grant the service account access in Play Console under **Users and permissions**. Assign only the permissions you need. For subscription reads assign "View financial data, orders, and cancellation survey responses". For mutations assign "Manage orders and subscriptions".
+1. Create a service account in a Google Cloud project that has the Google Play Android Developer API enabled.
+2. Grant the service account access in Play Console under **Users and permissions**. Assign only the permissions you need. For subscription reads assign "View financial data, orders, and cancellation survey responses". For purchase mutations (refund, cancel, revoke, defer) assign "Manage orders and subscriptions". For catalog calls (`monetization.*`, `inappproducts.*`) assign "Manage store presence".
 3. Mint a short lived access token from the service account JSON key using your platform's Google auth client. Cache the token until a minute before expiry.
 4. Send `Authorization: Bearer <token>` on every request. Set `Content-Type: application/json` for POST, PATCH, and PUT bodies.
 5. Use exponential backoff for HTTP 429 and 5xx responses. Treat 401 as "refresh token" and 403 as "fix permissions", not as retry candidates.
@@ -226,16 +255,18 @@ Accept: application/json
 Typical request shape for a cancel call:
 
 ```http
-POST /androidpublisher/v3/applications/com.example.app/purchases/subscriptions/premium_monthly/tokens/abc123:cancel HTTP/1.1
+POST /androidpublisher/v3/applications/com.example.app/purchases/subscriptionsv2/tokens/abc123:cancel HTTP/1.1
 Host: androidpublisher.googleapis.com
 Authorization: Bearer ya29.a0Af...
-Content-Length: 0
+Content-Type: application/json
+
+{"cancellationContext": {"cancellationType": "USER_REQUESTED_STOP_RENEWALS"}}
 ```
 
 Typical request shape for a voided purchases page:
 
 ```http
-GET /androidpublisher/v3/applications/com.example.app/purchases/voidedpurchases?startTime=1704067200000&maxResults=1000&type=0 HTTP/1.1
+GET /androidpublisher/v3/applications/com.example.app/purchases/voidedpurchases?maxResults=1000&type=1 HTTP/1.1
 Host: androidpublisher.googleapis.com
 Authorization: Bearer ya29.a0Af...
 ```

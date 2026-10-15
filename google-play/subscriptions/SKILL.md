@@ -27,8 +27,8 @@ Confirm the goal before you touch the Play Console or write code. Answer these q
 | What product are you selling? | One Subscription per logical entitlement (Premium, Cloud Storage, etc). |
 | How many billing periods? | Each billing period becomes a separate Base Plan under that Subscription. |
 | Do you need trials, intro pricing, upgrade incentives, or win back? | Offers attach to Base Plans. Prepaid Base Plans cannot carry Offers. |
-| Who decides who qualifies for an offer? | Google managed eligibility for new customer trials, developer determined for everything else. |
-| Do you have add ons? | Each add on is a separate Subscription. Your backend, not Google, enforces the parent relationship. |
+| Who decides who qualifies for an offer? | Google evaluates New customer acquisition and Upgrade eligibility; developer determined covers everything else (loyalty, win back, cohorts). |
+| Do you have add ons? | Each add on is its own Subscription product. Play can sell them together as one subscription with add ons purchase (several `ProductDetailsParams`, first = base item); all items must be auto renewing with the same billing period, max 50 items, not available in KR. Which add on needs which base is your app's rule; Play does not enforce it. |
 
 Stop here if the answer to "what are we actually selling" is not yes or no clear. Modeling a fuzzy catalog locks you into Product IDs that you cannot rename later.
 
@@ -60,7 +60,7 @@ Add one Base Plan per billing period or plan type you want to sell under that Su
 | --- | --- | --- |
 | Auto renewing | Standard recurring subscription. Google charges at each period end until cancellation. | Yes |
 | Prepaid | User pays upfront for a fixed window. No auto renew, no grace period, no account hold. | No |
-| Installment | User commits to N monthly payments, then rolls to month to month. Brazil, France, Italy, Spain only. | Yes |
+| Installment | User commits to N monthly payments, then renews either month to month or into another N payment commitment (renewal type is fixed at creation). Brazil, France, Italy, Spain only. | Yes |
 
 A Subscription with a monthly auto renewing plan and a yearly auto renewing plan is the typical paywall shape. Add a prepaid plan if your market needs it. Add an installment plan only if you ship to a supported market.
 
@@ -74,7 +74,8 @@ Offers attach to a single Base Plan. Each Offer has an ordered list of pricing p
 | Intro price | Discounted for N periods | (skip) | New customer acquisition or developer determined |
 | Trial then intro | Free for N days | Discounted for N periods | New customer acquisition |
 | Loyalty discount | Discounted for N periods | (skip) | Developer determined (tagged) |
-| Win back | Discounted for N periods | (skip) | Configured as win back in console |
+| Win back | Discounted for N periods | (skip) | Developer determined (tagged, for example `winback`) |
+| Upgrade incentive | Discounted for N periods | (skip) | Upgrade (Google managed, user currently holds a specified subscription) |
 
 Pick Google managed eligibility for new customer trials. Pick developer determined eligibility when your backend decides (loyalty, cohorts, cross product, custom win back logic). Tag developer determined offers so your app can filter on `offerTags`.
 
@@ -157,8 +158,8 @@ Detect an installment plan by reading `installmentPlanDetails`.
 
 ```kotlin
 val installment = offer.installmentPlanDetails
-val commitmentCount = installment?.commitmentPaymentsCount
-val renewalCount = installment?.subsequentCommitmentPaymentsCount
+val commitmentCount = installment?.installmentPlanCommitmentPaymentsCount
+val renewalCount = installment?.subsequentInstallmentPlanCommitmentPaymentsCount
 ```
 
 Launch the billing flow with the selected offer token. Every purchase requires a token, including Base Plans without Offers.
@@ -185,8 +186,8 @@ Prove the catalog and the code agree before you ship.
 3. For each Offer, confirm the pricing phases in the response match what you configured. A missing phase usually means the Offer is not active.
 4. Walk through every paywall path and confirm your code passes a non null `offerToken`. Missing tokens cause the billing flow to fail.
 5. Test developer determined eligibility by returning an empty tag set from your backend and confirming tagged Offers drop out of the UI.
-6. Test a prepaid purchase end to end if you sell one. Confirm your app extends entitlement on top up rather than treating the second purchase as a new subscription.
-7. Confirm initial purchases are acknowledged within 3 days (and within the plan duration for prepaid plans shorter than 3 days). Server side acknowledgement after RTDN processing is the safer default.
+6. Test a prepaid purchase end to end if you sell one. Confirm your app extends entitlement on top up rather than treating the second purchase as a new subscription: the top up is a new token that you process and acknowledge, then invalidate the linked token.
+7. Confirm every purchase, including each prepaid top up (it arrives as a new purchase token with the previous token in `linkedPurchaseToken`), is acknowledged within 3 days, or within half the plan duration for prepaid plans shorter than one week (1.5 days for a 3 day plan). An unacknowledged top up revokes and refunds the remaining subscription. Server side acknowledgement after RTDN processing is the safer default.
 8. If you sell installment plans in Brazil, France, Italy, or Spain, test the purchase dialog in that locale and confirm the commitment count is communicated to the user.
 
 ## References

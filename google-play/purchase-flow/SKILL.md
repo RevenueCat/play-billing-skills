@@ -26,7 +26,7 @@ Use this skill when you need to:
 - Wire a `PurchasesUpdatedListener` and handle every `BillingResponseCode`.
 - Decide where to verify, where to acknowledge, and how to grant entitlements idempotently.
 - Support pending transactions (cash at convenience store, carrier billing, slow card auth).
-- Bundle multiple items into a single transaction (PBL 7.0+).
+- Sell subscriptions with add ons (several subscription items in one transaction).
 
 Out of scope: connecting `BillingClient`, querying `ProductDetails`, subscription upgrades or downgrades, and retry or error taxonomy beyond the launch results listed below.
 
@@ -40,7 +40,7 @@ Confirm the preconditions before you build params.
 | `ProductDetails` cached | Held from a prior `queryProductDetailsAsync` | Required input to `ProductDetailsParams`. |
 | Pending purchases enabled | `BillingClient.Builder.enablePendingPurchases(...)` was called | Users with delayed payment cannot buy otherwise. |
 | Existing ownership known | Ran `queryPurchasesAsync()` recently | Prevents `ITEM_ALREADY_OWNED` surprises. |
-| Offer token resolved (subs only) | Selected from `subscriptionOfferDetails` | Missing token returns `DEVELOPER_ERROR`. |
+| Offer token resolved | Subs: from `subscriptionOfferDetails`. One time: from `oneTimePurchaseOfferDetailsList` when the product has several purchase options or offers | A missing subs token returns `DEVELOPER_ERROR`; a missing one time token silently buys the default purchase option. |
 
 Record the product type (`INAPP` vs `SUBS`), the selected `basePlanId`, and the chosen `offerToken` before moving on.
 
@@ -86,6 +86,9 @@ Decide whether acknowledge and grant happen server side (primary) or client side
 val productDetailsParams = BillingFlowParams.ProductDetailsParams
     .newBuilder()
     .setProductDetails(productDetails)
+    // offerToken is nullable on OneTimePurchaseOfferDetails. selectedOffer is the entry the user chose from
+    // productDetails.oneTimePurchaseOfferDetailsList; fail fast rather than silently buying the default purchase option.
+    .setOfferToken(requireNotNull(selectedOffer.offerToken))
     .build()
 
 val flowParams = BillingFlowParams.newBuilder()
@@ -127,7 +130,7 @@ You must pass the current `Activity`. `OK` here means the dialog was shown, not 
 | `ITEM_ALREADY_OWNED` | User owns product or has unacknowledged purchase | Refresh via `queryPurchasesAsync()` and process it. |
 | `DEVELOPER_ERROR` | Bad params, missing offer token, wrong package name | Fix params, check Console listing. |
 | `FEATURE_NOT_SUPPORTED` | Device or Play Store does not support the product type | Hide the buy button on this device. |
-| `BILLING_UNAVAILABLE` | No Google account or Play Services missing | Prompt user to sign in to Play. |
+| `BILLING_UNAVAILABLE` | Billing unavailable for this user or device: outdated Play Store, unsupported country, purchases disabled by an admin, payment method cannot be charged, or (PBL 9+) Play Store blocked by the system such as kids mode | Do not auto retry. Show a generic message with a Try again button. |
 | `ITEM_UNAVAILABLE` | Not available in region or deactivated | Check Console availability. |
 | `NETWORK_ERROR` | Cannot reach Play servers | Retry after delay, do not loop aggressively. |
 
@@ -148,7 +151,7 @@ val listener = PurchasesUpdatedListener { result, purchases ->
 
 ### Process a successful purchase (5 steps)
 
-1. **Verify server side.** Post `purchase.purchaseToken` to your backend. Backend calls `purchases.products.get` (one time) or `purchases.subscriptionsv2.get` (subs). Check `purchaseState == 0`, `productId`, `packageName`, `orderId` not seen before, and for subs `expiryTimeMillis`.
+1. **Verify server side.** Post `purchase.purchaseToken` to your backend. Backend calls `purchases.products.get` (one time) or `purchases.subscriptionsv2.get` (subs). For one time products check `purchaseState == 0` (Purchased), `productId`, and that `orderId` was not seen before. For subscriptions check `subscriptionState` (`SUBSCRIPTION_STATE_ACTIVE` for a completed new purchase), each `lineItems[].productId`, and `lineItems[].expiryTime` (RFC 3339).
 2. **Check `purchase.purchaseState`.** Grant only on `PURCHASED`. Show pending UI on `PENDING`. Log on `UNSPECIFIED_STATE`.
 3. **Grant entitlement idempotently.** Use `purchaseToken` as a unique key. A retry, an RTDN, and a second device query must not stack grants.
 4. **Acknowledge or consume within 3 days.**
@@ -182,7 +185,8 @@ fun handlePurchase(purchase: Purchase) {
             return
         }
         Purchase.PurchaseState.PURCHASED -> {
-            if (!purchase.isAcknowledged) verifyAndGrantAccess(purchase)
+            verifyAndGrantAccess(purchase) // idempotent, keyed by purchaseToken
+            if (!purchase.isAcknowledged) acknowledge(purchase)
         }
     }
 }
@@ -196,9 +200,9 @@ Transitions arrive via a later `PurchasesUpdatedListener` fire, an RTDN on your 
 - **On app launch**: keeps local entitlement cache honest against refunds and expirations.
 - **On foreground resume**: catches cancellations in Play Store and pending purchases that completed in the background.
 
-### Multi line item purchases (PBL 7.0+)
+### Subscriptions with add ons
 
-Add multiple `ProductDetailsParams` entries to the list. All items must share a product type (subs or inapp). One purchase token covers the bundle, so acknowledge once, then iterate `purchase.products` to grant every item.
+Add several subscription `ProductDetailsParams` (each with an offer token); the first is the base item. All items must be auto renewing base plans with the same billing period and unique product IDs, at most 50 items (not available in KR). One purchase token covers the bundle: acknowledge once, then iterate `purchase.products` to grant every item.
 
 ## Phase 4: Verify
 

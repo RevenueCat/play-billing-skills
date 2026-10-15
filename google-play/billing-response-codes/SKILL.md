@@ -47,16 +47,16 @@ The tables reproduced below in Phase 2 mirror the appendix verbatim so you can a
 | Code | Value | Retriable | Description | Recommended Strategy |
 |------|-------|-----------|-------------|---------------------|
 | `OK` | 0 | N/A | Operation succeeded | Process the result normally. |
-| `USER_CANCELED` | 1 | No | User dismissed the purchase dialog | No action needed. Do not show an error message. |
+| `USER_CANCELED` | 1 | No | User dismissed the purchase dialog. Since PBL 8.3 also returned when the user left to pay in an external app (e-wallet) and did not return (debug message `BILLING_ACTIVITY_PAUSED`; `ERROR` before 8.3). | No action needed. Do not show an error message. |
 | `SERVICE_UNAVAILABLE` | 2 | Yes | Google Play service is temporarily unavailable | Retry with exponential backoff (2s base, 2x factor, max 3 attempts). |
 | `BILLING_UNAVAILABLE` | 3 | No (auto) | Billing is unavailable on this device or for this user | Do not auto retry. Check Play Store version and user account. Let the user try again manually. **PBL 9** (with androidx.core 1.9+) also routes a system blocked Play Store here with a "Play Store is blocked" `debugMessage`, where PBL 8 returned `ERROR`. |
 | `ITEM_UNAVAILABLE` | 4 | No | The requested product is not available for purchase | Refresh product details with `queryProductDetailsAsync()`. The product may have been deactivated. |
 | `DEVELOPER_ERROR` | 5 | No | Invalid arguments passed to the API | Fix your code. Check product IDs, offer tokens, and parameter construction. This is a programming error. |
 | `ERROR` | 6 | Yes | An internal Google Play error occurred | Retry with exponential backoff. If persistent, report to Google. |
-| `ITEM_ALREADY_OWNED` | 7 | No | The user already owns this non consumable item | Call `queryPurchasesAsync()` to refresh your local purchase cache. The user may have purchased on another device. |
+| `ITEM_ALREADY_OWNED` | 7 | No | The user already owns this item (a subscription, a non consumable, or a consumable that has not been consumed yet) | Call `queryPurchasesAsync()` to refresh your local purchase cache. The user may have purchased on another device. |
 | `ITEM_NOT_OWNED` | 8 | No | Attempted to consume or acknowledge an item the user does not own | Call `queryPurchasesAsync()` to refresh your local purchase cache. The purchase may have been refunded. |
 | `NETWORK_ERROR` | 12 | Yes | A network error occurred during the operation | Retry with a short delay (1-2 seconds). Check device connectivity. |
-| `SERVICE_DISCONNECTED` | -1 | Yes | The `BillingClient` is not connected to Google Play Services | With `enableAutoServiceReconnection()` (PBL 8), the library retries automatically. Without it, call `startConnection()` and retry. |
+| `SERVICE_DISCONNECTED` | -1 | Yes | The `BillingClient` is not connected to the Play Store billing service | With `enableAutoServiceReconnection()` (opt in, PBL 8+) the library reconnects before the next call; if you still get this code, retry the call (simple retry in session, exponential backoff in the background). Without it, call `startConnection()` and retry. |
 | `FEATURE_NOT_SUPPORTED` | -2 | No | The requested feature is not supported on this device or Play Store version | Check `isFeatureSupported()` before calling feature specific APIs. Provide fallback behavior. |
 | `SERVICE_TIMEOUT` | -3 | Yes (Deprecated) | The request timed out | Deprecated in recent PBL versions. Treat as `SERVICE_UNAVAILABLE` and retry with backoff. |
 
@@ -93,7 +93,7 @@ val listener = PurchasesUpdatedListener { billingResult, purchases ->
 |----------|------------|--------|--------------|---------|
 | Simple retry | 1-2 seconds | 1x (fixed) | 3 | `NETWORK_ERROR` |
 | Exponential backoff | 2 seconds | 2x | 3 | `SERVICE_UNAVAILABLE`, `ERROR`, `SERVICE_TIMEOUT` |
-| Auto reconnect | Handled by PBL 8 | N/A | N/A | `SERVICE_DISCONNECTED` |
+| Reconnect, then retry | Library (auto reconnection) or `startConnection()` | Simple in session, backoff in background | 3 | `SERVICE_DISCONNECTED` |
 | User initiated | N/A | N/A | N/A | `BILLING_UNAVAILABLE` |
 | No retry | N/A | N/A | N/A | `USER_CANCELED`, `DEVELOPER_ERROR`, `FEATURE_NOT_SUPPORTED` |
 
