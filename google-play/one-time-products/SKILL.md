@@ -25,7 +25,7 @@ Confirm what you are building before writing code. Answer these questions:
 
 - What product type is this? Consumable (repeatable like coins) or non consumable (one time like remove ads)?
 - Where does fulfillment happen? Server side verification plus server side consume or acknowledge is the reliable pattern. Client side is acceptable only during early development.
-- Which PBL version is the app on? PBL 9.x is assumed. Pending purchases for one time products are enabled explicitly by passing `PendingPurchasesParams.newBuilder().enableOneTimeProducts()` to `enablePendingPurchases()` (required since PBL 8.0; the parameterless overload was removed in 8.0).
+- Which PBL version is the app on? PBL 9.x is assumed. Pending purchases for one time products are enabled explicitly by passing `PendingPurchasesParams.newBuilder().enableOneTimeProducts().build()` to `enablePendingPurchases()` (required since PBL 8.0; the parameterless overload was removed in 8.0).
 - Do you need multi quantity, pre order, or multiple offers on the same product?
 
 If any answer is unclear, stop and gather the requirements. Do not ship a purchase flow with ambiguous fulfillment rules.
@@ -36,13 +36,13 @@ Gather the facts that drive the implementation.
 
 | Discovery item | Where to find it |
 | --- | --- |
-| Product IDs | Play Console, Monetize > Products > In-app products |
+| Product IDs | Play Console, Monetize with Play > Products > One-time products (In-app products on consoles still on the legacy model) |
 | Product state | Must be Active before the app can query or sell |
 | Pricing and availability | Play Console product page |
 | Tax category | Play Console product page |
 | PBL version | App's `build.gradle` billing dependency |
 | Backend verification endpoint | Your server code or API spec |
-| RTDN subscription | Cloud Pub/Sub topic for `ONE_TIME_PRODUCT_PURCHASED` and `ONE_TIME_PRODUCT_CANCELED` |
+| RTDN subscription | Cloud Pub/Sub topic with "Get all notifications for subscriptions and one-time products" selected in Play Console (otherwise `ONE_TIME_PRODUCT_PURCHASED` and `ONE_TIME_PRODUCT_CANCELED` are not sent) |
 
 Choose naming up front. Good patterns: `coins_100`, `remove_ads`, `level_pack_desert`. Avoid `product_1` or `item_a`. Product IDs are permanent and cannot be reused after deletion.
 
@@ -108,6 +108,8 @@ fun displayProduct(productDetails: ProductDetails) {
 }
 ```
 
+A product can have several purchase options (buy, rent) and offers (discount, pre order). Read `productDetails.oneTimePurchaseOfferDetailsList` to list them; `oneTimePurchaseOfferDetails` returns only the backwards compatible buy option. Each entry has `offerToken`, `formattedPrice`, and `rentalDetails`, `preorderDetails`, or `discountDisplayInfo` when applicable.
+
 ### Launch the purchase flow
 
 `launchBillingFlow()` needs an `Activity`. Only one flow can be active at a time.
@@ -164,7 +166,7 @@ private val listener =
 
 ### Route by purchase state
 
-Never grant, consume, or acknowledge a `PENDING` purchase.
+Never grant, consume, or acknowledge a `PENDING` purchase. A pre order stays `PENDING` until its release time, then becomes `PURCHASED` on its own; show pre order messaging, not a payment prompt (pre orders are in Early Access).
 
 ```kotlin
 fun handlePurchase(purchase: Purchase) {
@@ -214,9 +216,7 @@ suspend fun acknowledgePurchase(
         .setPurchaseToken(purchaseToken)
         .build()
     val result = billingClient.acknowledgePurchase(params)
-    if (result.billingResult.responseCode
-        == BillingResponseCode.OK
-    ) {
+    if (result.responseCode == BillingResponseCode.OK) {
         // Purchase acknowledged
     }
 }
@@ -227,7 +227,7 @@ suspend fun acknowledgePurchase(
 Always read `purchase.quantity`. For single quantity purchases the value is 1, so the code stays compatible.
 
 ```kotlin
-fun handleMultiQuantityPurchase(purchase: Purchase) {
+suspend fun handleMultiQuantityPurchase(purchase: Purchase) {
     val quantity = purchase.quantity
     grantCoins(userId, quantity * COINS_PER_PACK)
     consumePurchase(billingClient, purchase.purchaseToken)
@@ -236,7 +236,7 @@ fun handleMultiQuantityPurchase(purchase: Purchase) {
 
 ### Launch a specific offer
 
-When a product has multiple offers, pass the `offerToken` from the chosen offer.
+When a product has multiple offers, pass the token of the entry the user chose in `oneTimePurchaseOfferDetailsList`, unwrapped: `requireNotNull(offer.offerToken)` (the getter is nullable).
 
 ```kotlin
 fun launchPurchaseWithOffer(
@@ -280,8 +280,8 @@ suspend fun queryExistingPurchases(
 The server flow for each `PURCHASED` purchase:
 
 1. Receive the purchase token from the client.
-2. Call the Google Play Developer API `purchases.products.get` with the token.
-3. Confirm the purchase state, product ID, and expected price.
+2. Call `purchases.productsv2.getproductpurchasev2` (or `purchases.products.get`) with the token.
+3. Confirm the purchase state, product ID, and quantity. To check the amount paid, call `orders.get` with the order ID.
 4. Record the entitlement in your database.
 5. Call `purchases.products.consume` or `purchases.products.acknowledge`.
 6. Return success to the client only after the finalize call succeeds.
