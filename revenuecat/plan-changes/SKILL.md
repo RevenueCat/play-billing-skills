@@ -92,7 +92,7 @@ try {
     val result = Purchases.sharedInstance.awaitPurchase(params)
     // result.customerInfo reflects the new subscription
 } catch (e: PurchasesTransactionException) {
-    if (!e.userCancelled) showError(e.error.message)
+    if (!e.userCancelled) showError(userFacingMessage(e.error)) // log e.error.message; mapping in revenuecat/error-handling
 }
 ```
 

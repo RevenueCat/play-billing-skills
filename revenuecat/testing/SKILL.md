@@ -1,6 +1,6 @@
 ---
 name: testing
-description: Use this skill when testing a RevenueCat Android integration. Covers the RevenueCat Test Store (test_ API key prefix, in dialog Success/Fail/Cancel choice), mockk based unit testing with an interface wrapper around Purchases, and a GitHub Actions CI pattern. Avoids Google Play sandbox for day to day test iteration.
+description: Use this skill when testing a RevenueCat Android integration. Covers the RevenueCat Test Store (test_ API key prefix, in dialog choice of Test valid purchase, Test failed purchase, or Cancel), mockk based unit testing with an interface wrapper around Purchases, and a GitHub Actions CI pattern. Avoids Google Play sandbox for day to day test iteration.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -120,7 +120,7 @@ class MyApplication : Application() {
 
 ### Step 4: Trigger the Test Store dialog
 
-Run the app in debug and call `awaitPurchase()` from your paywall. A dialog appears with Success, Fail, and Cancel options. Each choice resolves the same way production would: Success returns a `PurchaseResult` with active entitlements, Fail throws `PurchasesTransactionException` with `error.code == PurchasesErrorCode.TestStoreSimulatedPurchaseError` and `userCancelled == false`, Cancel throws with `userCancelled = true`. Walk every branch of your error handling to verify UI states.
+Run the app in debug and call `awaitPurchase()` from your paywall. A "Test Store Purchase" dialog appears with Test valid purchase, Test failed purchase, and Cancel. Each choice resolves the same way production would: Test valid purchase returns a `PurchaseResult` with active entitlements, Test failed purchase throws `PurchasesTransactionException` with `error.code == PurchasesErrorCode.TestStoreSimulatedPurchaseError` and `userCancelled == false`, and Cancel throws with `userCancelled = true`. Walk every branch of your error handling to verify UI states.
 
 ### Step 5: Wrap Purchases in a BillingService
 
