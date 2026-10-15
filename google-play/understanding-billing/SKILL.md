@@ -33,7 +33,7 @@ The four actors in every transaction:
 | Actor | Responsibility |
 | --- | --- |
 | Your app | Query products, launch purchase flow, forward purchase tokens to backend |
-| Google Play Services | System service that renders the purchase dialog and talks to Google's servers |
+| Google Play Store app | Hosts the billing service PBL connects to, renders the purchase dialog, and talks to Google's servers |
 | Your backend | Verify tokens against the Developer API, store entitlements, process RTDNs |
 | Google Play servers | Process payments, run renewals and payment recovery, emit RTDNs |
 
@@ -47,16 +47,18 @@ Map the developer's goal to the pillar(s) they need, then to the next skill.
 | --- | --- | --- |
 | First time onboarding, no account yet | Play Console | `google-play/setup` |
 | Show prices and launch a purchase from the app | PBL | `google-play/integrating-pbl` |
-| Verify a purchase token on the server | Developer API | `google-play/server-verification` |
+| Verify a purchase token on the server | Developer API | `google-play/backend-architecture` |
 | Receive renewal and cancellation events | RTDN plus Developer API | `google-play/rtdn` |
-| Create or edit products, base plans, offers | Play Console or catalog API | `google-play/catalog` |
-| Handle subscription lifecycle states | Developer API plus RTDN | `google-play/subscription-lifecycle` |
+| Create or edit products, base plans, offers | Play Console or catalog API | `google-play/catalog-management` |
+| Handle subscription lifecycle states | Developer API plus RTDN | `google-play/subscription-states` |
+| Upgrade an existing PBL 7 or 8 integration | PBL | `google-play/pbl-v7-to-v9-migration` or `google-play/pbl-v8-to-v9-migration` |
+| Offer alternative billing or external links | PBL plus Developer API | `google-play/alternative-billing` |
 
 Decision notes and tradeoffs:
 
 - Treat the Developer API as the source of truth. PBL is convenience. Your backend should verify every purchase token before granting entitlements.
 - Acknowledge every purchase within 3 days. Unacknowledged purchases auto refund.
-- PBL feature availability depends on the Google Play Services version on the device. Use `isFeatureSupported()` before calling feature specific APIs.
+- PBL feature availability depends on the Google Play Store app version on the device. Use `isFeatureSupported()` before calling feature specific APIs.
 - Subscriptions have a lifecycle (active, paused, grace period, on hold, canceled, expired). Plan for state handling on the server side, not just the app.
 - Entitlements are your problem. Google does not store what each user has access to.
 
@@ -113,7 +115,7 @@ Sanity check the developer's understanding before moving on:
 - Do they know that entitlement tracking is their responsibility, not Google's?
 - Have they picked the next skill to invoke based on the Phase 2 table?
 
-If any answer is unclear, re-read the relevant section of the full chapter before proceeding. If the developer is trying to sell physical goods, services performed in the physical world, peer to peer payments, or content consumable outside the app, Google Play Billing is not required. Chapter 18 covers alternative billing in regulated regions (South Korea, EEA, India, United States).
+If any answer is unclear, re-read the relevant section of the full chapter before proceeding. If the developer is trying to sell physical goods, services performed in the physical world, peer to peer payments, or content consumable outside the app, Google Play Billing is not required. Alternative billing and external link programs vary by region (South Korea, India, EEA, United States, Japan, United Kingdom, Australia and other user choice billing markets); route to `google-play/alternative-billing`.
 
 ## References
 

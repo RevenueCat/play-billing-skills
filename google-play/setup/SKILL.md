@@ -30,7 +30,7 @@ Gather facts before changing anything. Ask or check:
 1. Does the developer account already exist, and is it individual or organization? Organization verification can take up to two weeks.
 2. Is there a verified Google Payments Center profile? Without it, you cannot create paid products or publish in app purchases.
 3. What is the app's package name, signing configuration, and current Play Console upload state (any track)?
-4. Which GCP project is linked to the Play Console app? RTDN and the Play Developer API both depend on this link.
+4. Which Google Cloud project hosts the service account (with the Google Play Developer API enabled) and the Pub/Sub topic?
 5. Does a service account already exist for this backend, and which roles are granted in the Play Console (not only in GCP IAM)?
 6. Is there an existing Pub/Sub topic, and has `google-play-developer-notifications@system.gserviceaccount.com` been granted Publisher on it?
 7. Will the server side consumer use a push subscription (public HTTPS endpoint) or a pull subscription (firewalled or batched)?
@@ -45,17 +45,17 @@ Work top down. Each step unblocks the next, so do not skip ahead.
 2. Create and verify the Google Payments Center profile and tax information.
 3. Add the Play Billing Library 9.x dependency and upload a signed build to the internal test track.
 4. Create at least one product (one time product or subscription) and activate it.
-5. Link a GCP project to the Play Console app, create a service account, and grant minimum Play Console roles.
+5. Create a service account in a Cloud project with the Google Play Developer API enabled, then invite it in Play Console Users and permissions with the billing permissions.
 6. Create a Pub/Sub topic, grant Google publish access, and create a push or pull subscription.
 7. Point Play Console RTDN at the full topic name and send a test notification.
 
-Stop and re-plan if Payments verification, identity verification, or the GCP link is incomplete. Later steps will silently fail otherwise.
+Stop and re-plan if Payments verification, identity verification, or API enablement is incomplete. Later steps will silently fail otherwise.
 
 ## Phase 3: Execute
 
 ### 3.1 Play Console app setup
 
-1. Register at `play.google.com/console`. Choose individual or organization; organization unlocks managed publishing and team roles.
+1. Register at `play.google.com/console`. Choose personal or organization. Both have the same Play Console features; choose organization for a business, which several alternative billing programs require.
 2. Complete identity verification. Keep business registration, government issued ID, and proof of address accessible for organization accounts.
 3. Create the app at **All apps > Create app**. Fill name, default language, app type, and free or paid.
 4. Complete content, ads, and target audience declarations and add a privacy policy URL. Placeholder store listing content is fine for internal testing, but the privacy policy URL is required on every track.
@@ -65,7 +65,7 @@ Add the Play Billing Library to the app module `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    val billingVersion = "9.0.0"
+    val billingVersion = "9.1.0"
     implementation(
         "com.android.billingclient:billing-ktx:$billingVersion"
     )
@@ -74,18 +74,15 @@ dependencies {
 
 If the project uses a version catalog, define the version in `libs.versions.toml`:
 
-```kotlin
+```toml
 [versions]
-billing = "9.0.0"
+billing = "9.1.0"
 
 [libraries]
-billing-ktx = {
-    module = "com.android.billingclient:billing-ktx",
-    version.ref = "billing"
-}
+billing-ktx = { module = "com.android.billingclient:billing-ktx", version.ref = "billing" }
 ```
 
-Pin the version explicitly. PBL 9 requires `minSdk` 23, targets `compileSdk`/`targetSdk` 35, and depends on androidx.core 1.9 or later; an up to date Google Play Store app must be on the test device. Confirm `google()` and `mavenCentral()` are present in `settings.gradle.kts`.
+Pin the version explicitly. PBL 9 needs `minSdk` 23 or higher and `compileSdk` 35 or higher (it brings in androidx.core 1.15.0, whose AAR metadata requires compileSdk 35). The library's own targetSdk does not set yours: Google Play has required new apps and updates to target API 36 since August 31, 2026. billing-ktx 9.x needs Kotlin 2.2 or newer; on an older Kotlin, upgrade Kotlin or use `com.android.billingclient:billing` with the listener APIs. An up to date Google Play Store app must be on the test device. Confirm `google()` and `mavenCentral()` are present in `settings.gradle.kts`.
 
 Upload to the internal test track:
 
@@ -100,14 +97,14 @@ Internal releases publish in minutes with no review. Use closed testing (up to 2
 
 Create a one time product:
 
-1. Go to **Monetize > Products > In-app products > Create product**.
-2. Enter a Product ID such as `remove_ads`. The ID is permanent and cannot be reused once activated.
-3. Set name, description, default price, tax and compliance settings.
+1. Go to **Monetize with Play > Products > One-time products > Create one-time product** (consoles still on the legacy model show **In-app products**).
+2. Enter a Product ID such as `remove_ads`. The ID cannot be changed or reused once the product is created.
+3. Set name, description, tax and compliance settings, then add a purchase option (Buy or Rent) with regional prices.
 4. Click **Activate**.
 
 Use a `<category>_<descriptor>` naming scheme (`premium_monthly`, `coins_500`, `remove_ads`). Keep IDs lowercase with underscores. Do not encode prices or promotions in the ID.
 
-For subscriptions, create a Subscription, then add Base Plans and Offers inside it. A consistent scheme such as `premium_monthly` (subscription), `standard` (base plan), and `intro_7d_free` (offer) stays readable during later debugging.
+For subscriptions, create a Subscription, then add Base Plans and Offers inside it. A consistent scheme such as `premium_monthly` (subscription), `standard` (base plan), and `intro-7d-free` (offer) stays readable during later debugging. Base plan and offer IDs allow only lowercase letters, digits and hyphens. Product IDs allow lowercase letters, digits, underscores and periods, but no hyphens.
 
 Newly activated products can take a few minutes to propagate. If `queryProductDetails` returns empty immediately after activation, wait and retry.
 
@@ -115,17 +112,17 @@ Newly activated products can take a few minutes to propagate. If `queryProductDe
 
 Create the service account in GCP, then grant Play Console roles separately.
 
-1. In the Google Cloud Console, select or create a project and link it to the Play Console app.
+1. In the Google Cloud Console, select or create a project and enable the Google Play Android Developer API for it.
 2. Go to **IAM & Admin > Service Accounts > Create Service Account** and name it (for example `play-billing-backend`).
 3. Create a JSON key and download it to a secrets manager. Do not commit it or embed it in a client.
-4. In the Play Console, go to **Setup > API access**, link the GCP project if needed, and grant the service account the roles below.
+4. In the Play Console, go to **Users and permissions > Invite new users**, enter the service account email, and grant the permissions below.
 
 Grant only the roles the backend needs. Play Console permissions are separate from GCP IAM.
 
-| Play Console role | Purpose | Grant when |
+| Play Console permission | Purpose | Grant when |
 | --- | --- | --- |
-| View financial data | Read revenue reports and financial information | Backend reads reporting data |
-| Manage orders and subscriptions | Verify purchases, acknowledge transactions, revoke subscriptions, issue refunds | Backend validates purchases or manages subscriptions |
+| View financial data, orders, and cancellation survey responses | Required by the Google Play Billing APIs | Always, for any billing backend |
+| Manage orders and subscriptions | Verify and acknowledge purchases, cancel, defer, revoke, refund | Always, for any billing backend |
 | Admin (all permissions) | Full account control | Avoid unless a specific task requires it |
 
 Use separate service accounts for separate purposes (for example, purchase verification versus analytics). Rotate keys periodically; up to 10 keys per service account are allowed so you can deploy a new key before deleting the old. For Cloud Run, GKE, or App Engine, prefer workload identity federation over downloaded key files.
@@ -168,7 +165,7 @@ Create a subscription. Pick the delivery model that matches your infrastructure.
 | Push | Pub/Sub sends HTTP POST with a base64 JSON payload; endpoint must return 2xx | You have a public HTTPS endpoint and want the simplest path |
 | Pull | Your server calls the Pub/Sub API to fetch and acknowledge messages | Server sits behind a firewall, batches work, or needs concurrency control |
 
-Configure a dead letter topic. Pub/Sub retries failed messages indefinitely by default. Set a maximum delivery attempt count (allowed between 5 and 100) so undeliverable messages land on the dead letter topic rather than looping. Monitor the dead letter topic; messages there are events your system did not process.
+Configure a dead letter topic. Pub/Sub keeps retrying failed messages until they expire, then drops them. Set a maximum delivery attempt count (allowed between 5 and 100) so undeliverable messages land on the dead letter topic rather than looping. Monitor the dead letter topic; messages there are events your system did not process.
 
 Each RTDN message payload looks like:
 
@@ -181,23 +178,25 @@ Each RTDN message payload looks like:
     "subscriptionNotification": {
         "version": "1.0",
         "notificationType": 4,
-        "purchaseToken": "abc123...",
-        "subscriptionId": "premium_monthly"
+        "purchaseToken": "abc123..."
     }
 }
 ```
 
+The notification carries only the token; call `purchases.subscriptionsv2.get` and read `lineItems[].productId` to learn the product.
+
 Enable RTDN in the Play Console:
 
 1. Go to **Monetize > Monetization setup**.
-2. Under **Real time developer notifications**, enter the full topic name `projects/your-project-id/topics/play-billing-notifications`.
-3. Save.
+2. Check **Enable real-time notifications** and enter the full topic name `projects/your-project-id/topics/play-billing-notifications`.
+3. If you sell one time products, choose **Get all notifications for subscriptions and one-time products**; the other option sends no one time product purchase events.
+4. Save changes.
 
 ## Phase 4: Verify
 
 Send a test notification and walk the environment checklist.
 
-1. In the Play Console RTDN settings, click **Send test notification**.
+1. In the Play Console RTDN settings, click **Send Test Message**.
 2. Confirm the message arrives at the Pub/Sub subscription. For push, confirm the endpoint received an HTTP POST and returned 200.
 3. The payload contains a `testNotification` field instead of `subscriptionNotification` or `oneTimeProductNotification`. The handler should acknowledge it without treating it as a real event.
 
@@ -207,9 +206,9 @@ If the test never arrives, check each link in the chain:
 | --- | --- | --- |
 | "This version of the app is not configured for billing through Google Play" | App not on a test track, version code mismatch, or wrong signing key | Install the exact signed build uploaded to the Play Console |
 | `queryProductDetails` returns empty | Product not Active, wrong ID or type, or propagation delay | Activate the product; verify ID and INAPP vs SUBS; wait a few minutes |
-| 403 from Google Play Developer API | Missing Play Console role or GCP project not linked | Link GCP in **Setup > API access**; grant roles in Play Console, not only GCP IAM |
+| 403 from Google Play Developer API | Service account missing Play Console permissions, or the API is not enabled in its Cloud project | Invite the service account in **Users and permissions** with both billing permissions; enable the Google Play Android Developer API |
 | RTDN test never arrives | Wrong topic name, missing Publisher role, unreachable push endpoint | Match full topic name; grant Publisher to `google-play-developer-notifications@system.gserviceaccount.com`; verify HTTPS endpoint returns 200 |
-| "The developer account associated with this app is not eligible for testing" | Testing with the developer account itself | Use a different Google account and add it under **Setup > License testing** |
+| Tester is charged real money or sees no test instruments | Account is not a license tester, or a different device account is paying | Add it under **Settings > License testing**; the account that downloaded the app (or the first account on the device) makes the purchase |
 | Gradle fails to resolve billing library | Missing repositories or proxy block | Add `google()` and `mavenCentral()` in `settings.gradle.kts`; configure proxy if needed |
 
 Final environment checklist:

@@ -24,11 +24,11 @@ Before you test anything, confirm the environment is wired up. Skipping a step h
 
 Run through this checklist:
 
-- **License testers list**: Play Console -> Setup -> License testing. The Gmail you test with must appear here. Testers are set at the developer account level, apply to every app you own, and propagate within minutes.
+- **License testers list**: Play Console -> Settings -> License testing. The Gmail you test with must appear here. Testers are set at the developer account level, apply to every app you own, and propagate within minutes.
 - **Test track upload**: Your APK or AAB must sit on internal, closed, or open testing. The license tester benefit only activates after you have uploaded the app at least once. Internal testing ships in minutes and is the right default for billing work.
-- **Signed in account**: The license tester account must be the active Google Play Store account on the test device. If the device has several accounts, the Play Store account is the one that matters, not the device owner.
+- **Signed in account**: The license tester account must be on the test device. With several accounts, the purchase uses the account that downloaded the app, or the first account on the device if none did (for example a sideloaded debug build). Expand the purchase dialog to confirm which account is paying.
 - **Play Billing Lab installed**: Install the Play Billing Lab companion app from the Play Store on the test device. You need it for country overrides, trial resets, state transitions, and the response simulator.
-- **`enablePendingPurchases` flag**: Verify your `BillingClient` opts in to pending transactions if you sell in markets with cash payments. Without this, slow test cards will not behave correctly.
+- **`enablePendingPurchases`**: every `BillingClient` that sets a purchases listener must call `enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())`, or `build()` throws. Add `enablePrepaidPlans()` only if you sell prepaid plans and handle pending prepaid purchases.
 
 If any item is missing, fix that first. License tester tooling is invisible otherwise.
 
@@ -42,19 +42,20 @@ Pick a strategy that matches what you changed. Running all 11 subscription test 
 | Subscription lifecycle logic | Renewal, grace period, account hold, cancellation |
 | Plan change or upgrade code | Each replacement mode you support, plus linkedPurchaseToken handling |
 | RTDN or server integration | Renewal, grace, hold, revoke, refund notifications end to end |
-| Error handling or retry paths | Response simulator sweep: `SERVICE_DISCONNECTED`, `NETWORK_ERROR`, `ITEM_ALREADY_OWNED`, `USER_CANCELED`, `BILLING_UNAVAILABLE` |
+| Error handling or retry paths | Response simulator sweep: `NETWORK_ERROR`, `ITEM_ALREADY_OWNED`, `USER_CANCELED`, `BILLING_UNAVAILABLE`; for a lost service connection, force stop the Play Store app while connected |
 | Pre release candidate | Full 11 case suite plus one real payment on the cheapest SKU |
 
 ### Test product static responses
 
-Inside the Play purchase dialog, license testers see four virtual instruments instead of real cards. Each one forces a deterministic outcome, so pick the one that matches the path you want to exercise.
+Inside the Play purchase dialog, license testers see five virtual instruments instead of real cards. Each one forces a deterministic outcome, so pick the one that matches the path you want to exercise.
 
 | Test instrument | Result | Use when you are testing |
 |---|---|---|
 | Test card, always approves | Immediate success, `BillingResponseCode.OK` | Happy path, acknowledgment, entitlement grant |
 | Test card, always declines | Immediate failure, `BillingResponseCode.ERROR` | Decline UI, error messaging, absence of entitlement grant |
-| Slow test card, always approves | Pending state, then success after minutes | Pending purchase handling, UI state, `PurchasesUpdatedListener` firing twice |
-| Slow test card, always declines | Pending state, then final failure | Pending decline path, cleanup of pending UI |
+| Slow test card, approves after a few minutes | Pending state, then success after minutes | Pending purchase handling, UI state, `PurchasesUpdatedListener` firing twice |
+| Slow test card, declines after a few minutes | Pending state, then final failure | Pending decline path, cleanup of pending UI |
+| Test card, approves then charges back | Success, then a simulated chargeback initiated by the user | Chargeback and refund review handling, `PendingRefundReviewNotification` RTDN |
 
 Before you pick an instrument, decide what signal proves the test passed: a specific response code, a purchase state transition, an RTDN on your server, or an entitlement change in the app. Write it down first.
 
@@ -66,7 +67,7 @@ If you are exercising the subscription state machine, choose one of these as you
 - **Grace period enter and recover**: verifies you keep access up during grace and re grant after recovery.
 - **Account hold enter and recover**: verifies you revoke access during hold and restore after payment fix.
 - **Pause and resume**: only if your product allows pausing.
-- **Upgrade with replacement mode**: verifies `linkedPurchaseToken` handling on both app and server.
+- **Upgrade with replacement mode**: verifies `linkedPurchaseToken` handling on the server (the app only sees the new purchase token).
 
 ## Phase 3: Execute
 
@@ -75,7 +76,7 @@ If you are exercising the subscription state machine, choose one of these as you
 Open your app on the test device signed in with the license tester account.
 
 1. Trigger your normal product list query. Confirm prices render and the product appears.
-2. Launch the billing flow. Expect the Play purchase sheet to show the four test instruments rather than real cards.
+2. Launch the billing flow. Expect the Play purchase sheet to show the five test instruments rather than real cards.
 3. Pick "Test card, always approves".
 4. Confirm `PurchasesUpdatedListener` fires with `BillingResponseCode.OK` and a `Purchase` in the `PURCHASED` state.
 5. Acknowledge the purchase from your server or client path.
@@ -119,11 +120,20 @@ Use Play Billing Lab to force specific transitions instead of waiting on timers 
 
 ### Step 3: Exercise error paths with the response simulator
 
-Play Billing Lab ships a response simulator that forces any Play Billing Library method to return a chosen `BillingResult`. Configure a rule, run the flow, confirm your app recovers.
+Play Billing Lab ships a response simulator that overrides the `BillingResult` of `launchBillingFlow`, `acknowledgePurchase`, `consumeAsync`, and `queryProductDetailsAsync` with a chosen positive response code. It cannot return negative codes such as `SERVICE_DISCONNECTED`, and it does not drop the service connection. Configure a rule, run the flow, confirm your app recovers.
+
+Opt the test build in (PBL 7.1.1+), in a debug or test manifest only:
+
+```xml
+<meta-data android:name="com.google.android.play.largest_release_audience.NONPRODUCTION" android:value="" />
+<meta-data android:name="com.google.android.play.billingclient.enableBillingOverridesTesting" android:value="true" />
+```
+
+Open Play Billing Lab before your app, and confirm the Play Billing Lab status bar icon shows the connection.
 
 Minimum response codes to cover:
 
-- `SERVICE_DISCONNECTED` during purchase: your app reconnects and retries.
+- Lost service connection (not simulated: force stop the Play Store app while connected): your app reconnects on the next call and retries.
 - `NETWORK_ERROR` on `acknowledgePurchase`: your app retries, because unacknowledged purchases refund in 3 days in production.
 - `ITEM_ALREADY_OWNED` on `launchBillingFlow`: your app refreshes purchases and messages the user correctly.
 - `USER_CANCELED`: your app returns to the previous screen without an error banner.
@@ -131,7 +141,7 @@ Minimum response codes to cover:
 
 ### Step 4: Enable pending purchases
 
-If you accept cash payments, configure your client once and then test with the slow approve card.
+Pending purchases are mandatory for one time products. Configure your client once and then test with the slow approve card.
 
 ```kotlin
 val billingClient = BillingClient.newBuilder(context)
@@ -139,7 +149,7 @@ val billingClient = BillingClient.newBuilder(context)
     .enablePendingPurchases(
         PendingPurchasesParams.newBuilder()
             .enableOneTimeProducts()
-            .enablePrepaidPlans()
+            // .enablePrepaidPlans() // only if you sell prepaid plans and handle pending prepaid purchases
             .build()
     )
     .build()
@@ -155,7 +165,7 @@ when (purchase.purchaseState) {
 }
 ```
 
-Verify both the pending to purchased transition and the pending to cancelled transition deliver a second `PurchasesUpdatedListener` callback, and that your server processes the matching RTDN.
+Verify the pending to purchased transition delivers a second `PurchasesUpdatedListener` callback (or appears in `queryPurchasesAsync()` on resume), that a declined slow card never grants access after an app restart, and that your server processes `ONE_TIME_PRODUCT_PURCHASED`/`SUBSCRIPTION_PURCHASED` or `ONE_TIME_PRODUCT_CANCELED`/`SUBSCRIPTION_PENDING_PURCHASE_CANCELED`.
 
 ### Step 5: One real payment before production
 
