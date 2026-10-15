@@ -94,6 +94,10 @@ val fresh = Purchases.sharedInstance.awaitCustomerInfo(
 
 ```kotlin
 fun updateUI(entitlement: EntitlementInfo?) {
+    if (entitlement != null && !entitlement.isActive && entitlement.billingIssueDetectedAt != null) {
+        // Account hold, or an expiry after a billing issue that was never resolved. See revenuecat/payment-recovery.
+        showAccountHoldScreen(); return
+    }
     if (entitlement == null || !entitlement.isActive) {
         showSubscribeScreen(); return
     }
@@ -151,7 +155,8 @@ Walk through each case and confirm the UI responds correctly.
 | Fresh purchase | true | Premium content |
 | Grace period (billing issue, still granted) | true | Premium + billing warning |
 | Canceled, still before `expirationDate` | true | Premium + expiry notice |
-| On hold | false | Subscribe screen |
+| On hold | false | Account hold screen (fix payment method, paywall as a fallback) |
+| Expired after a billing issue that was never resolved | false | Account hold screen, whose paywall path lets the user buy again |
 | Paused | false | Subscribe screen |
 | Expired | false | Subscribe screen |
 | Pending (no payment yet) | false | Subscribe screen |
