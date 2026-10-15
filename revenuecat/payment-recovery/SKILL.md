@@ -20,12 +20,13 @@ Failed renewals on Google Play move a subscription through two states: grace per
 
 ## Phase 1: Understand
 
-Three things happen when a renewal fails:
+A failed renewal leads to one of these states:
 
 | State | Access | How RevenueCat surfaces it | User sees |
 | --- | --- | --- | --- |
 | Grace period | Retained | `entitlement.isActive == true` and `billingIssueDetectedAt != null` | Google in app snackbar by default |
 | Account hold | Revoked | `entitlement.isActive == false` and `billingIssueDetectedAt != null` | Google in app snackbar by default |
+| Expired without recovery | Revoked | Can look like account hold: the SDK documents `billingIssueDetectedAt` as null when there is no issue or it was resolved, so it can stay set after the subscription ends | Your account hold screen and its paywall path |
 | Recovered | Retained | `billingIssueDetectedAt == null` | Nothing |
 
 Two signals matter in the SDK:
@@ -86,6 +87,8 @@ when {
     else -> showPremiumContent()
 }
 ```
+
+The `showAccountHoldScreen()` branch also catches a subscription that expired without recovery, because `billingIssueDetectedAt` can stay set after it ends. The screen cannot tell the two apart, so offer both actions: fixing the payment method, which restores a subscription on hold, and a path to the paywall, the only way back after that expiry.
 
 ### Send the user to fix payment
 

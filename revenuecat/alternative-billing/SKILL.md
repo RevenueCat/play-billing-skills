@@ -1,6 +1,6 @@
 ---
 name: alternative-billing
-description: Use this skill when scoping Google Play alternative billing work with RevenueCat Android SDK 10.x. Documents the current support status, which flows RevenueCat abstracts and which require direct integration at the time the chapter was written.
+description: Use this skill when scoping Google Play alternative billing work with RevenueCat Android SDK 10.x. Documents the support status as of purchases-android 10.27.1, which flows RevenueCat abstracts, and which require direct integration.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -70,7 +70,7 @@ Planning checklist:
 
 ## Phase 3: Execute
 
-What RevenueCat's SDK currently supports in this space, per the chapter:
+What the RevenueCat SDK supports in this space as of 10.27.1:
 
 | Flow | SDK coverage |
 |---|---|
@@ -78,6 +78,8 @@ What RevenueCat's SDK currently supports in this space, per the chapter:
 | User Choice Billing | No dedicated SDK APIs. Implement via Play Billing Library alongside RevenueCat. |
 | Alternative Billing Only | No dedicated SDK APIs. Implement via Play Billing Library alongside RevenueCat. |
 | External Offers | No dedicated SDK APIs. Implement via Play Billing Library alongside RevenueCat. |
+| External Content Links | No dedicated SDK APIs. Implement via Play Billing Library 8.2.1+ alongside RevenueCat. |
+| Billing Choice (PBL 9.1) | Not available: RevenueCat 10.27.1 is built against Play Billing Library 8.3.0. |
 | External Payment Links (legacy, Japan) | No dedicated SDK APIs. Closed to new enrollment since September 30, 2026 and ending after March 31, 2027; existing integrations use the Play Billing Library alongside RevenueCat. |
 
 If you ship Path B with `PurchasesAreCompletedBy.MY_APP`, acknowledgement is app wide: your code must also acknowledge or consume every standard Play Store purchase that goes through `Purchases.purchase`, or Google refunds it after 3 days.
