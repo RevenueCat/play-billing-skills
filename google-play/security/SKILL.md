@@ -37,12 +37,12 @@ Fraud prevention is not a single check. It is a stack of controls where each lay
 | Layer | Purpose | Where it runs |
 |---|---|---|
 | 1. Backend receipt verification | Confirm the purchase exists in Google's records | Your server, via `purchases.products.get` / `purchases.subscriptionsv2.get` |
-| 2. Response field validation | Catch product swaps and cross app token reuse | Your server (check `packageName`, `productId`, `orderId`) |
+| 2. Response field validation | Catch product swaps and cross app token reuse | Your server (check `productId` and `purchaseState`; the package is bound by the request path) |
 | 3. Purchase state check | Reject `PENDING` and expired purchases | Your server |
-| 4. Replay protection | Block reuse of valid tokens | Unique constraint on purchase token column |
+| 4. Replay protection | Block reuse of valid tokens | Unique constraint on purchase token column; for subscriptions, once a new token is verified as purchased (not while it is `SUBSCRIPTION_STATE_PENDING`), revoke the entitlement on its `linkedPurchaseToken` |
 | 5. Token to user binding | Detect token sharing across accounts | Your server (store and compare userId on duplicates) |
 | 6. Acknowledgement | Prevent auto refund at 3 day mark | Your server, after entitlement grant |
-| 7. Voided purchase sync | Revoke access on refunds and chargebacks | Daily batch job against `purchases.voidedpurchases.list` |
+| 7. Voided purchase sync | Revoke access on refunds and chargebacks | `voidedPurchaseNotification` RTDN in real time, plus a daily `purchases.voidedpurchases.list` backfill with `type=1` (includes subscriptions; key by `orderId`) over the last 30 days |
 | 8. Device and profile signals | Give Google and yourself correlation data | Client sets `obfuscatedAccountId` / `obfuscatedProfileId` before launching the flow |
 | 9. Integrity and pinning | Raise the cost of modified APKs | Play Integrity API plus TLS certificate pinning |
 | 10. Server time of record | Defeat timezone manipulation | All time decisions use server clock |
@@ -77,20 +77,27 @@ The server is the only place that decides whether a purchase is real. Call the G
 
 ```python
 def grant_entitlement(token, claimed_product, user_id):
+    # The package is bound by the request path: Google rejects a token from another app.
     record = play_api.get_purchase(PACKAGE, claimed_product, token)
-    assert record["packageName"] == PACKAGE
-    assert record["productId"] == claimed_product
-    assert record["purchaseState"] == 0  # PURCHASED, not PENDING
+    if record.get("productId", claimed_product) != claimed_product:
+        raise PurchaseRejected("product mismatch")
+    state = record["purchaseState"]
+    if state == 2:  # PENDING (includes pre orders): not a rejection, do not refund; grant after ONE_TIME_PRODUCT_PURCHASED
+        raise PurchasePending("pending")  # a separate exception from PurchaseRejected
+    if state != 0:  # 1 = CANCELED
+        raise PurchaseRejected("not purchased")
     existing = db.entitlements.find_by_token(token)
     if existing:
         if existing.user_id != user_id:
             security_log.flag("token_reuse", token, user_id)
         return existing
-    db.entitlements.insert_unique(token, user_id, record["orderId"])
+    db.entitlements.insert_unique(token, user_id, record.get("orderId"))  # promo code purchases have no orderId
     play_api.acknowledge(PACKAGE, claimed_product, token)
 ```
 
 Two things do the real work here. First, the unique insert on `token` means a replayed token from any account is a database conflict, not a second grant. Second, comparing the claiming `user_id` against the original owner on every lookup surfaces token sharing and account abuse patterns that a naive "already processed, return success" path would hide.
+
+If a purchase fails validation or abuse checks (for example a product mismatch; a PENDING purchase is not a failure), do not grant it and do not leave it to expire unacknowledged: call `orders.refund` with `revoke=true` for its `orderId` so Google records that you rejected it.
 
 ### Step 3: Add device and profile signals before the purchase
 
@@ -113,24 +120,25 @@ Both values come back in the purchase record, so your backend can reconcile them
 |---|---|---|
 | Modified APK removes client checks | Backend receipt verification | Play Integrity API, R8 obfuscation |
 | Fabricated purchase tokens | `purchases.products.get` returns error, server rejects | Package name and product ID checks |
-| Stolen token from another app | `packageName` validation on the API response | Order ID uniqueness |
+| Stolen token from another app | The API call scoped to your `packageName` rejects foreign tokens | Token to user binding |
 | Product swap (cheap token, expensive claim) | `productId` validation against client claim | Price recorded from API response, not client |
 | Replayed token on same account | Unique constraint on `purchase_token` | Idempotent grant returns existing record |
 | Replayed token across accounts | Token to user binding with alert on mismatch | Device fingerprint correlation |
 | Pending payment treated as paid | Reject `purchaseState == 2`, wait for RTDN | Acknowledge only after state becomes PURCHASED |
 | Missed acknowledgement triggers auto refund | Server side acknowledge after grant with retry | Monitor acknowledgement failures as high priority |
-| Refund abuse and chargebacks | Daily `purchases.voidedpurchases.list` poll | Graduated enforcement (warn, restrict, ban) |
+| Refund abuse and chargebacks | `voidedPurchaseNotification` RTDN plus daily `voidedpurchases.list?type=1` backfill | Graduated enforcement (warn, restrict, ban) |
 | Consumable refund after spend | Deduct refunded amount from user balance | Restrict access until balance is non negative |
 | Account sharing across many devices | Concurrent device limit, device fingerprinting | Flag high distinct device count per token |
 | Timezone and clock manipulation | Server clock is the only clock for access decisions | `SystemClock.elapsedRealtime()` for offline grace |
 | Ban evasion via new account | Store device and account identifiers of banned users | Apply restrictions on first matching signal |
+| Double entitlement after upgrade or resubscribe | Revoke the `linkedPurchaseToken` entitlement once the new purchase is completed | Alert when the linked token belongs to another user |
 
 ## Common Pitfalls
 
 - Acknowledging from the client. If the client acknowledges before your server grants entitlement, a failure leaves the user charged with no access. Acknowledge on the server, after the grant.
 - Returning 200 on duplicate tokens without checking the original owner. You miss token sharing entirely.
 - Bundling premium assets in `assets/` or `res/`. Any APK extractor pulls them out. Host premium content on your server and gate downloads on verified entitlement.
-- Real time revocation when a void is detected. Batch revocations during your regular sync. Google occasionally reverses voids.
+- Waiting for a daily batch to revoke a voided purchase. Revoke as soon as the `voidedPurchaseNotification` or `SUBSCRIPTION_REVOKED` RTDN arrives, and apply graduated enforcement (warn, restrict, ban) to the account, not delayed revocation.
 - Using `System.currentTimeMillis()` for trial eligibility or offer windows. The device clock is user controlled.
 
 ## References
