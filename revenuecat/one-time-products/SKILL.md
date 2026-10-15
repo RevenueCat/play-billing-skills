@@ -42,7 +42,7 @@ Fetch offerings, launch the purchase, then read the result off `CustomerInfo`.
 
 ```kotlin
 val offerings = Purchases.sharedInstance.awaitOfferings()
-val pkg = offerings.current?.availablePackages?.first() ?: return
+val pkg = offerings.current?.availablePackages?.firstOrNull() ?: return
 ```
 
 Launch the purchase with `awaitPurchase`. It suspends until the RevenueCat backend verifies the token.
@@ -73,7 +73,7 @@ try { /* awaitPurchase */ } catch (e: PurchasesTransactionException) {
     when {
         e.error.code == PurchasesErrorCode.PaymentPendingError -> showPending()
         e.userCancelled -> Unit
-        else -> showError(e.error.message)
+        else -> showError(userFacingMessage(e.error)) // mapping in revenuecat/error-handling
     }
 }
 ```
@@ -83,7 +83,7 @@ try { /* awaitPurchase */ } catch (e: PurchasesTransactionException) {
 | Success | `awaitPurchase` returns with updated `CustomerInfo` | Grant access from `entitlements` or `nonSubscriptionTransactions`. |
 | User cancel | `PurchasesTransactionException`, `userCancelled == true` | Swallow silently. |
 | Pending payment | `PurchasesTransactionException`, `PaymentPendingError` | Show a pending message. The SDK updates the entitlement later through `UpdatedCustomerInfoListener`. |
-| Other error | `PurchasesTransactionException`, other codes | Surface `e.error.message` to you. |
+| Other error | `PurchasesTransactionException`, other codes | Log `e.error.message` and show a mapped string from `userFacingMessage` (see `revenuecat/error-handling`). |
 
 ## Phase 5: Verify
 

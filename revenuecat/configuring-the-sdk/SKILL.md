@@ -1,6 +1,6 @@
 ---
 name: configuring-the-sdk
-description: Use this skill when adding and configuring the RevenueCat Android SDK (purchases-kt/purchases) in an app. Covers the Gradle dependency, Purchases.configure with PurchasesConfiguration, initial app user id strategy, and log level.
+description: Use this skill when adding and configuring the RevenueCat Android SDK (com.revenuecat.purchases:purchases) in an app. Covers the Gradle dependency, Purchases.configure with PurchasesConfiguration, initial app user id strategy, and log level.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -16,7 +16,7 @@ metadata:
 
 # Configuring the RevenueCat Android SDK
 
-Use this skill to add and configure RevenueCat (`purchases-kt`) in an Android app. A single `Purchases.configure` call replaces `BillingClient` setup, connection lifecycle management, reconnection handling, and launch-time purchase queries.
+Use this skill to add and configure the RevenueCat Android SDK (`com.revenuecat.purchases:purchases`) in an Android app. A single `Purchases.configure` call replaces `BillingClient` setup, connection lifecycle management, reconnection handling, and launch-time purchase queries.
 
 Work through the phases in order. The [full chapter on revenuecat.com](https://www.revenuecat.com/guides/revenuecat-android-sdk/configuring-the-sdk) has the complete reference text.
 
@@ -140,7 +140,7 @@ Once configured, you do not need to:
 
 | Symptom | Likely cause |
 | --- | --- |
-| `IllegalStateException: There is no singleton instance` | Code touched `Purchases.sharedInstance` before `configure` ran. Move `configure` to `Application.onCreate`. |
+| `UninitializedPropertyAccessException: There is no singleton instance` | Code touched `Purchases.sharedInstance` before `configure` ran. Move `configure` to `Application.onCreate`. |
 | Offerings always `null` | Package name mismatch between Play Console and dashboard, or offering not marked current. |
 | Duplicate anonymous users | `configure` called more than once per process, or an unstable id passed as `appUserID`. |
 | Verbose logs in production | Log level not gated on `BuildConfig.DEBUG`. |

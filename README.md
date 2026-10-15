@@ -184,7 +184,7 @@ Source: the [RevenueCat Android SDK guide](https://www.revenuecat.com/guides/rev
 | [`subscriptions`](revenuecat/subscriptions/) | Model subscriptions through Offerings, Packages, StoreProduct, SubscriptionOption, PricingPhase |
 | [`one-time-products`](revenuecat/one-time-products/) | Sell one time products with `awaitPurchase`, letting the SDK acknowledge or consume automatically |
 | [`purchase-flow`](revenuecat/purchase-flow/) | Implement a purchase with `awaitPurchase`, read `CustomerInfo` entitlements, and restore |
-| [`plan-changes`](revenuecat/plan-changes/) | Upgrades, downgrades, and plan switches via `GoogleProductChangeInfo` and SDK managed token chaining |
+| [`plan-changes`](revenuecat/plan-changes/) | Upgrades, downgrades, and plan switches via `oldProductId` and `StoreReplacementMode`, with SDK managed token chaining |
 | [`price-changes`](revenuecat/price-changes/) | Roll out price changes with RevenueCat's automatic confirmation flow handling |
 | [`subscription-states`](revenuecat/subscription-states/) | Gate access via `CustomerInfo` and `entitlement.isActive`, drilling into `willRenew` and `periodType` when needed |
 | [`cancellations-pauses-winback`](revenuecat/cancellations-pauses-winback/) | Surface cancellation, pause, and winback state from `CustomerInfo` and the REST API |

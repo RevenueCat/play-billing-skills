@@ -92,7 +92,8 @@ val result: PurchaseResult = Purchases.sharedInstance.awaitPurchase(
 val result = Purchases.sharedInstance.awaitPurchase(
     PurchaseParams.Builder(activity, newPackage)
         .oldProductId("old_product_id")
-        .googleReplacementMode(GoogleReplacementMode.WITH_TIME_PRORATION)
+        // Between base plans of the same subscription, only CHARGE_FULL_PRICE or WITHOUT_PRORATION works.
+        .replacementMode(StoreReplacementMode.WITH_TIME_PRORATION)
         .build()
 )
 ```
@@ -143,7 +144,7 @@ pkg.webCheckoutURL         // URL? (RevenueCat web billing)
 
 ```kotlin
 val product: StoreProduct
-product.productId
+product.id                 // "productId:basePlanId" for subscriptions, "productId" for one time products
 product.title
 product.description
 product.price.formatted    // "$4.99"
@@ -252,7 +253,7 @@ try {
     when (e.error.code) {
         PurchasesErrorCode.PaymentPendingError -> showPendingUi()
         PurchasesErrorCode.NetworkError -> showRetry()
-        else -> showGenericError(e.error.message)
+        else -> showGenericError(userFacingMessage(e.error)) // mapping in revenuecat/error-handling
     }
 }
 ```

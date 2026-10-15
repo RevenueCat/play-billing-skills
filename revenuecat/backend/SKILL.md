@@ -110,19 +110,28 @@ Never ship the secret key in the Android APK, in a BuildConfig field, or in any 
 ### Webhook receiver outline
 
 ```kotlin
+// Fail at startup on a missing or blank value. A blank one would match an empty Authorization header.
+val webhookAuthorization: String = System.getenv("RC_WEBHOOK_AUTHORIZATION")?.takeIf { it.isNotBlank() }
+    ?: error("Set RC_WEBHOOK_AUTHORIZATION to the authorization header value from the RevenueCat dashboard")
+
 post("/revenuecat/webhook") {
-    val auth = call.request.header("Authorization")
-    require(auth == "Bearer ${System.getenv("RC_WEBHOOK_SECRET")}")
-    val event = call.receive<RevenueCatEvent>()
+    // constantTimeEquals and webhookJson are defined in revenuecat/webhooks
+    if (!constantTimeEquals(call.request.header(HttpHeaders.Authorization), webhookAuthorization)) {
+        call.respond(HttpStatusCode.Unauthorized); return@post
+    }
+    // The body is an envelope: {"api_version": "1.0", "event": {...}}
+    val event = webhookJson.decodeFromString<RevenueCatEnvelope>(call.receiveText()).event
     when (event.type) {
-        "INITIAL_PURCHASE", "RENEWAL" -> grantAccess(event.appUserId, event.entitlements)
-        "CANCELLATION", "EXPIRATION" -> scheduleRevocation(event.appUserId)
+        "INITIAL_PURCHASE", "RENEWAL" -> grantAccess(event.appUserId, event.entitlementIds)
+        // Unsubscribe, billing error, and refund end access at different times, so read the current state.
+        "CANCELLATION" -> syncFromRevenueCat(event.appUserId)
+        "EXPIRATION" -> revokeAccess(event.appUserId, event.entitlementIds)
     }
     call.respond(HttpStatusCode.OK)
 }
 ```
 
-Verify the authorization header you configured in the RevenueCat dashboard. Respond 2xx fast; RevenueCat retries on non 2xx responses.
+Verify the authorization header you configured in the RevenueCat dashboard. Respond 200 fast; RevenueCat treats any other status as a failure and retries. This is an outline: follow `revenuecat/webhooks` for refunds, one time purchases, transfers, HMAC signing, and deduplication.
 
 ### What not to build
 

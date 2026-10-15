@@ -1,6 +1,6 @@
 ---
 name: plan-changes
-description: Use this skill when implementing subscription upgrades, downgrades, and plan switches via RevenueCat on Android. Covers GoogleProductChangeInfo, picking a Google replacement mode, and letting the SDK manage linkedPurchaseToken chaining.
+description: Use this skill when implementing subscription upgrades, downgrades, and plan switches via RevenueCat on Android. Covers PurchaseParams oldProductId and replacementMode, picking a Google replacement mode, and letting the SDK manage linkedPurchaseToken chaining.
 license: Apache-2.0; see LICENSE
 metadata:
   author: RevenueCat
@@ -10,7 +10,7 @@ metadata:
   - revenuecat
   - upgrade
   - downgrade
-  - google-product-change-info
+  - old-product-id
   - replacement-mode
 ---
 
@@ -24,14 +24,14 @@ Confirm the following before invoking a plan change:
 
 - The user has exactly one active Google Play subscription you intend to replace.
 - You have a fresh `CustomerInfo` from `Purchases.sharedInstance.awaitCustomerInfo()` or a cached value from a recent listener callback.
-- You have the target `Package` resolved from `offerings.current` (see `fetch-offerings` skill).
+- You have the target `Package` resolved from `offerings.current` (see `revenuecat/purchase-flow`).
 - Google Play Billing Library 7+ is on the classpath via the RevenueCat SDK.
 
-Skip this skill if the user has no active subscription. For a fresh purchase, use `make-purchase` instead.
+Skip this skill if the user has no active subscription. For a fresh purchase, use `revenuecat/purchase-flow` instead.
 
 ## Phase 2: Plan (pick a replacement mode)
 
-`GoogleReplacementMode` maps one to one onto Google's billing modes. First check whether the old and new plans are base plans of the same subscription product, that is, whether the part before `:` matches. Google restricts which modes that switch accepts.
+`StoreReplacementMode` (SDK 10.3.0 and later) maps one to one onto Google's billing modes. It replaces `GoogleReplacementMode`, which is deprecated since 10.3.0. First check whether the old and new plans are base plans of the same subscription product, that is, whether the part before `:` matches. Google restricts which modes that switch accepts.
 
 **Same subscription** (for example `premium:monthly` to `premium:annual`). Google accepts only these two modes. Any other mode fails the purchase with an error shown to the user.
 
@@ -68,7 +68,7 @@ val customerInfo = Purchases.sharedInstance.awaitCustomerInfo()
 val currentProductId = customerInfo.activeSubscriptions
     .firstOrNull()
     ?.substringBefore(":")
-    ?: return  // nothing active, route to make-purchase instead
+    ?: return  // nothing active, route to revenuecat/purchase-flow instead
 
 val newPackage = offerings.current
     ?.availablePackages
@@ -76,21 +76,17 @@ val newPackage = offerings.current
     ?: return
 
 val params = PurchaseParams.Builder(activity, newPackage)
-    .googleProductChangeInfo(
-        GoogleProductChangeInfo(
-            oldProductId = currentProductId,
-            // Monthly and annual are base plans of one subscription, so only
-            // CHARGE_FULL_PRICE or WITHOUT_PRORATION is accepted.
-            replacementMode = GoogleReplacementMode.CHARGE_FULL_PRICE,
-        )
-    )
+    .oldProductId(currentProductId)
+    // Monthly and annual are base plans of one subscription, so only
+    // CHARGE_FULL_PRICE or WITHOUT_PRORATION is accepted.
+    .replacementMode(StoreReplacementMode.CHARGE_FULL_PRICE)
     .build()
 
 try {
     val result = Purchases.sharedInstance.awaitPurchase(params)
     // result.customerInfo reflects the new subscription
 } catch (e: PurchasesTransactionException) {
-    if (!e.userCancelled) showError(e.error.message)
+    if (!e.userCancelled) showError(userFacingMessage(e.error)) // mapping in revenuecat/error-handling
 }
 ```
 
