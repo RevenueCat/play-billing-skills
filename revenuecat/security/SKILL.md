@@ -56,7 +56,7 @@ SDK 10.x has no enforced mode; see 3.1 below for gating on the result yourself.
 Even with Trusted Entitlements (`INFORMATIONAL`), the client is not the authority for paid content. Decide whether each premium endpoint:
 
 1. Calls the RevenueCat REST API per request, or
-2. Reads a local `has_entitlement` flag driven by RevenueCat webhooks.
+2. Reads entitlements your webhook handler stores, with their expiry (see `revenuecat/webhooks`).
 
 Option 2 is cheaper at request time, option 1 has no cache staleness. Pick one, document it, do not mix per endpoint without a reason.
 
@@ -136,7 +136,7 @@ def get_premium_content(user_id):
     return content
 ```
 
-Or read a local `has_pro` flag driven by RevenueCat webhooks and check that flag per request.
+Or read the entitlements your webhook handler stores (see `revenuecat/webhooks`) and check their expiry per request, re-reading the customer before you deny an expired looking one (at most once every few minutes per user).
 
 ## Phase 4: Verify
 

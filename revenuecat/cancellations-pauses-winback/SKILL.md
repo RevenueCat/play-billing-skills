@@ -25,7 +25,7 @@ Decide what state you need to surface to the user.
 | State | Signal in CustomerInfo | Notes |
 |---|---|---|
 | Canceled, still has access | `entitlement.unsubscribeDetectedAt != null` and `isActive == true` | Show "ends on [expirationDate]" |
-| Billing issue (grace or hold) | `entitlement.billingIssueDetectedAt != null` | Payment failed, recovery in progress |
+| Billing issue (grace or hold) | `entitlement.billingIssueDetectedAt != null` | Payment failed. Recovery is in progress unless the subscription already ended, which can leave the field set; see `revenuecat/payment-recovery` |
 | Paused | `entitlement.isActive == false` while product is still owned | Resume date: `autoResumeDate` |
 | Active and renewing | `entitlement.willRenew == true` | Normal state |
 
@@ -94,7 +94,7 @@ Google's resubscribe before expiry flow fires `SUBSCRIPTION_RESTARTED`. RevenueC
 
 ### Resubscribe after expiry
 
-A resubscribe after expiry fires a `RENEWAL` webhook, not `INITIAL_PURCHASE`. Grant entitlement access on both events in your backend handler.
+A resubscribe after expiry fires `INITIAL_PURCHASE` (usual on Google Play) or `RENEWAL`. Handle both the same way: `revenuecat/webhooks` re-reads the customer after either, which restores access.
 
 ## Phase 4: Verify
 

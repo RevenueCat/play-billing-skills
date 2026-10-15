@@ -172,8 +172,8 @@ entitlement.isActive                     // Boolean, the main access gate
 entitlement.willRenew                    // false if canceled
 entitlement.expirationDate               // Date? (null for lifetime)
 entitlement.periodType                   // NORMAL, TRIAL, INTRO, PREPAID
-entitlement.billingIssueDetectedAt       // Date? (non-null = grace/hold)
-entitlement.unsubscribeDetectedAt        // Date? (non-null = canceled)
+entitlement.billingIssueDetectedAt       // Date? (non null = grace/hold, or ended unrecovered)
+entitlement.unsubscribeDetectedAt        // Date? (non null = canceled)
 entitlement.store                        // PLAY_STORE, APP_STORE, etc.
 entitlement.productIdentifier            // subscription product ID
 entitlement.productPlanIdentifier        // base plan ID (Google only)
