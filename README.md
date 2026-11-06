@@ -2,7 +2,7 @@
 
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Skills](https://img.shields.io/badge/skills-45-brightgreen.svg)](#skill-index)
-[![purchases-android](https://img.shields.io/badge/purchases--android-10.x-FF5C5C.svg)](https://github.com/RevenueCat/purchases-android)
+[![purchases-android](https://img.shields.io/badge/purchases--android-11.x-FF5C5C.svg)](https://github.com/RevenueCat/purchases-android)
 [![Platform](https://img.shields.io/badge/platform-Android-3DDC84.svg)](#scope)
 
 Play Billing Skills turns RevenueCat's two billing handbooks, the [Google Play Billing handbook](https://www.revenuecat.com/guides/google-play-billing) and the [RevenueCat Android SDK handbook](https://www.revenuecat.com/guides/revenuecat-android-sdk), into agent ready instruction recipes for billing on Android. Each skill is task oriented. You ask your agent to "set up RTDN", "handle a failed renewal", or "migrate to Play Billing Library 9", and the matching skill walks the agent through the API calls, response codes, verification steps, and the pitfalls developers hit in production.
@@ -106,7 +106,7 @@ A skill is not documentation for humans. It is operational instructions for an L
 
 The skills cross reference each other by name. A migration skill names its prerequisite, a fix skill names the diagnostic that should have produced its input, and the two `understanding-*` skills act as routers that send the agent to the concrete skill to invoke next. The chain is written into each body so the agent does not have to guess the path.
 
-Every skill traces back to one of the two source guides, so its vocabulary and recommendations stay aligned with RevenueCat's published guidance. API identifiers are pinned to a version: Play Billing Library 9.x for the `google-play` collection, and RevenueCat Android SDK 10.x for the `revenuecat` collection. This keeps the agent from emitting calls that moved or were removed across majors.
+Every skill traces back to one of the two source guides, so its vocabulary and recommendations stay aligned with RevenueCat's published guidance. API identifiers are pinned to a version: Play Billing Library 9.x for the `google-play` collection, and RevenueCat Android SDK 11.x for the `revenuecat` collection. This keeps the agent from emitting calls that moved or were removed across majors.
 
 ## Scope
 
@@ -124,14 +124,14 @@ Out of scope:
 
 ## Versioning
 
-The skills target the current stable major of each layer: Play Billing Library 9.x for `google-play`, and the RevenueCat Android SDK 10.x for `revenuecat`. The three `pbl-v*-migration` skills cover moving between Play Billing Library majors. File an issue if you find a skill that has not caught up to a recent major.
+The skills target the current stable major of each layer: Play Billing Library 9.x for `google-play`, and the RevenueCat Android SDK 11.x for `revenuecat`. The three `pbl-v*-migration` skills cover moving between Play Billing Library majors. File an issue if you find a skill that has not caught up to a recent major.
 
 | Layer | Major targeted | Reference |
 |---|---|---|
 | Google Play Billing Library | 9.x (checked against 9.1.0) | <https://developer.android.com/google/play/billing/release-notes> |
-| RevenueCat Android SDK (purchases-android) | 10.x (checked against 10.27.1) | <https://github.com/RevenueCat/purchases-android/releases> |
+| RevenueCat Android SDK (purchases-android) | 11.x (checked against 11.1.0) | <https://github.com/RevenueCat/purchases-android/releases> |
 
-RevenueCat Android SDK 10.x bundles Play Billing Library 8.3.0, so PBL 9.1 billing choice is not available through the RevenueCat SDK.
+RevenueCat Android SDK 11.x exposes Play Billing Library 9.1.0 as an `api` dependency and needs compileSdk 35 or higher and Kotlin 2.1.0 or newer. The SDK itself has no API for billing choice or any other alternative billing program; see [`revenuecat/alternative-billing`](revenuecat/alternative-billing/).
 
 ## Contributing
 
@@ -196,9 +196,9 @@ Source: the [RevenueCat Android SDK guide](https://www.revenuecat.com/guides/rev
 | [`webhooks`](revenuecat/webhooks/) | Consume webhooks: request authentication, the normalized event schema, every event type, idempotency, and access taken from a re-read of the customer |
 | [`security`](revenuecat/security/) | Trusted Entitlements verification, server as the authority, API key hygiene, anonymous identity |
 | [`error-handling`](revenuecat/error-handling/) | Handle `PurchasesError`, the `PurchasesErrorCode` enum, the `userCancelled` flag, and the right UI per code |
-| [`alternative-billing`](revenuecat/alternative-billing/) | Scope alternative billing work with RevenueCat 10.x: what the SDK abstracts and what needs direct integration |
+| [`alternative-billing`](revenuecat/alternative-billing/) | Scope alternative billing work with RevenueCat 11.x: what the SDK abstracts and what needs direct integration |
 | [`testing`](revenuecat/testing/) | The RevenueCat Test Store, mockk based unit testing, and a GitHub Actions CI pattern |
-| [`revenuecat-api-quick-reference`](revenuecat/revenuecat-api-quick-reference/) | Quick reference for the SDK 10.x and the most used REST endpoints |
+| [`revenuecat-api-quick-reference`](revenuecat/revenuecat-api-quick-reference/) | Quick reference for the SDK 11.x and the most used REST endpoints |
 
 ## Find this repository useful? 😻
 
