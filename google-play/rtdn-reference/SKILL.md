@@ -189,6 +189,7 @@ Code-specific notes:
 2. Call the Voided Purchases API (`purchases.voidedpurchases.list` with `type=1`, which also returns subscriptions; the default `type=0` returns one time purchases only) for full details, including `voidedReason` and `voidedSource`; match records by `orderId`.
 3. Use `productType` to route to your subscription or one time product tables.
 4. Use `refundType` to decide whether to revoke the full entitlement or only an adjusted quantity.
+5. Expect your own revocations here too. `purchases.subscriptionsv2.revoke` and `orders.refund` with `revoke=true` each send a `voidedPurchaseNotification` (a subscription also gets `SUBSCRIPTION_REVOKED`, code `12`), listed with `voidedSource` 1 (developer). Keep the revoke idempotent. These voids add no fraud strike: if you revoked for fraud or abuse, record the strike when you revoke (see `google-play/security`).
 
 ### Pending refund review notifications
 
