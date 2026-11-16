@@ -22,7 +22,7 @@ RTDN pushes subscription and purchase state changes from Google Play to your bac
 
 Pin down the following before you write code:
 
-- **What triggers a notification.** Google Play publishes a message to a Cloud Pub/Sub topic you own every time a subscription changes state, a purchase is voided, or (if enabled in the RTDN settings) a one time product is purchased or a pending one is canceled.
+- **What triggers a notification.** Google Play publishes a message to a Cloud Pub/Sub topic you own every time a subscription changes state, a purchase is voided, or (if enabled in the RTDN settings) a one time product is purchased, or canceled (a pending payment that never completed) or revoked.
 - **What the notification contains.** A `DeveloperNotification` JSON object with `packageName`, `eventTimeMillis`, and exactly one of `subscriptionNotification`, `oneTimeProductNotification`, `voidedPurchaseNotification`, `pendingRefundReviewNotification`, or `testNotification`. Subscription, one time product, and voided purchase notifications carry a `purchaseToken` (a pending refund review carries `orderId` and `pendingRefundToken` instead), not the full purchase state.
 - **Who owns what.** You own the Pub/Sub topic and subscription in your own Google Cloud project. Google Play only has publish rights.
 - **Delivery semantics.** Cloud Pub/Sub guarantees at least once delivery and does not guarantee ordering. Duplicates and out of order messages are normal.
