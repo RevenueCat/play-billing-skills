@@ -96,7 +96,7 @@ Subscription notification payload:
 | Code | Type | Trigger | Required Action |
 |------|------|---------|-----------------|
 | 1 | `ONE_TIME_PRODUCT_PURCHASED` | One time product purchase completed | Verify purchase. Grant access. Acknowledge or consume. |
-| 2 | `ONE_TIME_PRODUCT_CANCELED` | Pending one time product purchase was canceled | Do not grant access. Clean up pending records. |
+| 2 | `ONE_TIME_PRODUCT_CANCELED` | One time product purchase was canceled or revoked: a pending payment that never completed, or a purchase revoked by you or at the customer's request | If it was still pending, clean up the pending record. If you had granted it, take access back in the voided purchase handler, which carries `refundType`. |
 
 One time product notification payload:
 
@@ -181,7 +181,7 @@ Code-specific notes:
 1. Read `oneTimeProductNotification.notificationType` and `purchaseToken`.
 2. Call `purchases.products.get` on the Google Play Developer API.
 3. For code `1`, verify the purchase state, grant the entitlement, then acknowledge (non-consumable) or consume (consumable) within 3 days.
-4. For code `2`, discard any pending record you created when the user began checkout.
+4. For code `2`, check your own records. If the purchase was still pending, discard the pending record you created when the user began checkout. If you had granted it, it was revoked by you or at the customer's request, and the same revocation arrives as a `voidedPurchaseNotification`: take access back in that handler, where `refundType` tells a full refund from a quantity based one, so code `2` never revokes on its own.
 
 ### Voided purchase notifications
 
@@ -189,6 +189,7 @@ Code-specific notes:
 2. Call the Voided Purchases API (`purchases.voidedpurchases.list` with `type=1`, which also returns subscriptions; the default `type=0` returns one time purchases only) for full details, including `voidedReason` and `voidedSource`; match records by `orderId`.
 3. Use `productType` to route to your subscription or one time product tables.
 4. Use `refundType` to decide whether to revoke the full entitlement or only an adjusted quantity.
+5. Expect your own revocations here too. `purchases.subscriptionsv2.revoke` and `orders.refund` with `revoke=true` each send a `voidedPurchaseNotification` (a subscription also gets `SUBSCRIPTION_REVOKED`, code `12`), listed with `voidedSource` 1 (developer). Keep the revoke idempotent. These voids add no fraud strike: if you revoked for fraud or abuse, record the strike when you revoke (see `google-play/security`).
 
 ### Pending refund review notifications
 

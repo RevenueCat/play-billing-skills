@@ -68,7 +68,7 @@ https://androidpublisher.googleapis.com/androidpublisher/v3/
 | `purchases.subscriptions.acknowledge` | POST | `applications/{packageName}/purchases/subscriptions/{subscriptionId}/tokens/{token}:acknowledge` | Acknowledge a subscription purchase. |
 | `purchases.subscriptions.cancel` / `purchases.subscriptions.defer` | POST | v1 paths with `{subscriptionId}` | Deprecated. Use the `subscriptionsv2` methods above. (`purchases.subscriptions.get` has been removed.) |
 
-Request bodies: `cancel` `{"cancellationContext": {"cancellationType": "USER_REQUESTED_STOP_RENEWALS" | "DEVELOPER_REQUESTED_STOP_PAYMENTS"}}`; `defer` `{"deferralContext": {"etag": "<etag from subscriptionsv2.get>", "deferDuration": "604800s", "validateOnly": false}}` (response `itemExpiryTimeDetails[]`); `revoke` `{"revocationContext": {"fullRefund": {}}}` or `proratedRefund: {}` or `itemBasedRefund: {"productId": "..."}`.
+Request bodies: `cancel` `{"cancellationContext": {"cancellationType": "USER_REQUESTED_STOP_RENEWALS" | "DEVELOPER_REQUESTED_STOP_PAYMENTS"}}`; `defer` `{"deferralContext": {"etag": "<etag from subscriptionsv2.get>", "deferDuration": "604800s", "validateOnly": false}}` (response `itemExpiryTimeDetails[]`); `revoke` `{"revocationContext": {"fullRefund": {}}}` or `proratedRefund: {}` (auto renewing plans, and prepaid plans of at least one week) or `itemBasedRefund: {"productId": "..."}`.
 
 #### SubscriptionPurchaseV2 Response (Key Fields)
 

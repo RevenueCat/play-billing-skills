@@ -43,7 +43,7 @@ Each cancellation type behaves differently with respect to access, refunds, RTDN
 | Developer, your reason | `purchases.subscriptionsv2.cancel` with `DEVELOPER_REQUESTED_STOP_PAYMENTS` | Until `expiryTime` | None | `SUBSCRIPTION_CANCELED` | `developerInitiatedCancellation` |
 | System, payment failure | Automatic after grace + account hold | None from the moment account hold expires | None | `SUBSCRIPTION_CANCELED` | `systemInitiatedCancellation` |
 | Replacement (plan change) | Plan change flow | Handled by new token | N/A | `SUBSCRIPTION_PURCHASED` on the new token (`linkedPurchaseToken` = old token); old token may report `SUBSCRIPTION_EXPIRED` (DEFERRED) | `replacementCancellation` |
-| Revoke | `purchases.subscriptionsv2.revoke` | Immediately terminated | The refund type you pass (`fullRefund` or `proratedRefund`) | `SUBSCRIPTION_REVOKED` | n/a (terminated) |
+| Revoke | `purchases.subscriptionsv2.revoke` | Immediately terminated | The refund type you pass (`fullRefund`, or `proratedRefund` for auto renewing plans and prepaid plans of at least one week) | `SUBSCRIPTION_REVOKED`, plus a `voidedPurchaseNotification` | n/a (terminated) |
 
 ### Pause versus cancel
 
@@ -197,6 +197,8 @@ fun revokeSubscription(
     purchaseToken: String,
     reason: String
 ) {
+    // A prepaid plan shorter than one week cannot take a prorated refund:
+    // use setFullRefund(RevocationContextFullRefund()) for it.
     val request = RevokeSubscriptionPurchaseRequest().setRevocationContext(
         RevocationContext().setProratedRefund(RevocationContextProratedRefund())
     )
@@ -211,7 +213,7 @@ fun revokeSubscription(
 }
 ```
 
-Revocation is appropriate for confirmed fraud, serious terms of service violations, or proactive chargeback response. It is not a substitute for a standard cancel plus refund. Google issues the refund type you chose (`fullRefund` or `proratedRefund`) and sends `SUBSCRIPTION_REVOKED` so your backend can reconcile even if the local write failed. `itemBasedRefund {productId}` is different: it revokes and fully refunds one item of a subscription with add ons, and the subscription stays active while other items remain.
+Revocation is appropriate for confirmed fraud, serious terms of service violations, or proactive chargeback response. It is not a substitute for a standard cancel plus refund. Google issues the refund type you chose (`fullRefund` or `proratedRefund`; a prepaid plan shorter than one week cannot take `proratedRefund`) and sends both `SUBSCRIPTION_REVOKED` and a `voidedPurchaseNotification`, so your backend can reconcile even if the local write failed. The Voided Purchases API lists the revocation with `voidedSource` 1 (developer), and that void adds no fraud strike by itself: if you revoked for fraud, record the strike when you revoke (see `google-play/security`). `itemBasedRefund {productId}` is different: it revokes and fully refunds one item of a subscription with add ons, and the subscription stays active while other items remain.
 
 ## Winback Eligibility Checks
 

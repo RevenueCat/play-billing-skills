@@ -97,7 +97,12 @@ def grant_entitlement(token, claimed_product, user_id):
 
 Two things do the real work here. First, the unique insert on `token` means a replayed token from any account is a database conflict, not a second grant. Second, comparing the claiming `user_id` against the original owner on every lookup surfaces token sharing and account abuse patterns that a naive "already processed, return success" path would hide.
 
-If a purchase fails validation or abuse checks (for example a product mismatch; a PENDING purchase is not a failure), do not grant it and do not leave it to expire unacknowledged: call `orders.refund` with `revoke=true` for its `orderId` so Google records that you rejected it.
+If a purchase fails validation or abuse checks (for example a product mismatch; a PENDING purchase is not a failure), or you cannot fulfill it, do not grant it and do not acknowledge or consume it. Do not leave it to expire unacknowledged either: Google cannot tell that from a backend timeout. Revoke and refund it right away so Google records that you rejected it:
+
+- Subscription: `purchases.subscriptionsv2.revoke` with `{"revocationContext": {"fullRefund": {}}}`.
+- One time product: `orders.refund` with `revoke=true` for its `orderId`.
+
+Both come back to you as a `voidedPurchaseNotification` (plus `SUBSCRIPTION_REVOKED` for a subscription) that the Voided Purchases API lists with `voidedSource` 1 (developer). If you rejected the purchase for fraud or abuse, record the strike against the account when you reject it; the void that comes back does not add one (see Common Pitfalls).
 
 ### Step 3: Add device and profile signals before the purchase
 
@@ -126,7 +131,7 @@ Both values come back in the purchase record, so your backend can reconcile them
 | Replayed token across accounts | Token to user binding with alert on mismatch | Device fingerprint correlation |
 | Pending payment treated as paid | Reject `purchaseState == 2`, wait for RTDN | Acknowledge only after state becomes PURCHASED |
 | Missed acknowledgement triggers auto refund | Server side acknowledge after grant with retry | Monitor acknowledgement failures as high priority |
-| Refund abuse and chargebacks | `voidedPurchaseNotification` RTDN plus daily `voidedpurchases.list?type=1` backfill | Graduated enforcement (warn, restrict, ban) |
+| Refund abuse and chargebacks | `voidedPurchaseNotification` RTDN plus daily `voidedpurchases.list?type=1` backfill | Graduated enforcement (warn, restrict, ban), counting strikes as in Common Pitfalls |
 | Consumable refund after spend | Deduct refunded amount from user balance | Restrict access until balance is non negative |
 | Account sharing across many devices | Concurrent device limit, device fingerprinting | Flag high distinct device count per token |
 | Timezone and clock manipulation | Server clock is the only clock for access decisions | `SystemClock.elapsedRealtime()` for offline grace |
@@ -138,7 +143,8 @@ Both values come back in the purchase record, so your backend can reconcile them
 - Acknowledging from the client. If the client acknowledges before your server grants entitlement, a failure leaves the user charged with no access. Acknowledge on the server, after the grant.
 - Returning 200 on duplicate tokens without checking the original owner. You miss token sharing entirely.
 - Bundling premium assets in `assets/` or `res/`. Any APK extractor pulls them out. Host premium content on your server and gate downloads on verified entitlement.
-- Waiting for a daily batch to revoke a voided purchase. Revoke as soon as the `voidedPurchaseNotification` or `SUBSCRIPTION_REVOKED` RTDN arrives, and apply graduated enforcement (warn, restrict, ban) to the account, not delayed revocation.
+- Waiting for a daily batch to revoke a voided purchase. Revoke access as soon as the `voidedPurchaseNotification` or `SUBSCRIPTION_REVOKED` RTDN arrives. Neither payload says who voided the purchase, so decide on enforcement once you have read the void from `purchases.voidedpurchases.list` with `type=1` (the default `type=0` leaves out subscriptions).
+- Counting every void as a strike. Apply graduated enforcement (warn, restrict, ban) for a void with `voidedSource` 0 (user) or 2 (Google), except `voidedReason` 8 (unacknowledged purchase), which is your acknowledgement failing, not the user. A `voidedSource` 1 void is your own revocation coming back and adds no strike: when you revoke or reject a purchase for fraud or abuse, record the strike at that moment instead.
 - Using `System.currentTimeMillis()` for trial eligibility or offer windows. The device clock is user controlled.
 
 ## References
