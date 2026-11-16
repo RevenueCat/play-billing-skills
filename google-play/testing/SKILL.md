@@ -27,7 +27,7 @@ Run through this checklist:
 - **License testers list**: Play Console -> Settings -> License testing. The Gmail you test with must appear here. Testers are set at the developer account level, apply to every app you own, and propagate within minutes.
 - **Test track upload**: Your APK or AAB must sit on internal, closed, or open testing. The license tester benefit only activates after you have uploaded the app at least once. Internal testing ships in minutes and is the right default for billing work.
 - **Signed in account**: The license tester account must be on the test device. With several accounts, the purchase uses the account that downloaded the app, or the first account on the device if none did (for example a sideloaded debug build). Expand the purchase dialog to confirm which account is paying.
-- **Play Billing Lab installed**: Install the Play Billing Lab companion app from the Play Store on the test device. You need it for country overrides, trial resets, state transitions, and the response simulator.
+- **Play Billing Lab installed**: Install the Play Billing Lab companion app from the Play Store on the test device. You need it for country overrides, trial resets, state transitions, the response simulator, and out of app purchase tests.
 - **`enablePendingPurchases`**: every `BillingClient` that sets a purchases listener must call `enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())`, or `build()` throws. Add `enablePrepaidPlans()` only if you sell prepaid plans and handle pending prepaid purchases.
 
 If any item is missing, fix that first. License tester tooling is invisible otherwise.
@@ -167,7 +167,18 @@ when (purchase.purchaseState) {
 
 Verify the pending to purchased transition delivers a second `PurchasesUpdatedListener` callback (or appears in `queryPurchasesAsync()` on resume), that a declined slow card never grants access after an app restart, and that your server processes `ONE_TIME_PRODUCT_PURCHASED`/`SUBSCRIPTION_PURCHASED` or `ONE_TIME_PRODUCT_CANCELED`/`SUBSCRIPTION_PENDING_PURCHASE_CANCELED`.
 
-### Step 5: One real payment before production
+### Step 5: Test purchases made outside your app
+
+Users can get one time products outside your app's own purchase flow: a featured product bought from your Play Store listing, a purchase recommendation Google shows in the billing overlay after the user abandons a cart, or a Play Games Reward. Play Billing Lab can stage each of these for a license tester (one time products only):
+
+1. Sign in to the Play Store and to Play Billing Lab with the same license tester account.
+2. In Play Billing Lab, open the "Out-of-app purchases" card, enter your app and product, pick the purchase option or offer, and start the test. It stays active for 2 hours.
+3. Make sure the account can get the item: it must not own the non consumable, must have consumed any earlier purchase of the consumable, and must have processed any earlier reward.
+4. Buy the featured product from your store listing; or start a purchase in your app, abandon it, and accept the recommendation; or use "Grant Reward" in Play Billing Lab.
+
+Verify that the app detects the purchase (in `PurchasesUpdatedListener` while connected, or with `queryPurchasesAsync()` on resume), sends it to your backend, and that it is granted and acknowledged or consumed (a license tester purchase is refunded after 3 minutes without that). An out of app purchase carries no obfuscated account ID, so grant it to the signed in user or ask which account should get it.
+
+### Step 6: One real payment before production
 
 License tester cards do not exercise 3D Secure prompts, card verification, refund processing, or financial reporting. Before your first production push:
 
